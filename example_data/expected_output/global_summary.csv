@@ -1,0 +1,4 @@
+Species,Total_Proteins,Clustered_Total,Species_Specific_Unclustered,Species_Specific_Clustered,species_specific_percentage,total_candidate_percentage,verified_candidate_percentage,N0,N1,species_specific_clustered,species_specific_unclustered
+Outgroup,2,1,1,0,NA,NA,NA,NA,NA,NA,NA
+SpeciesA,4,2,2,1,25.00,75.00,25.00,0,1,1,2
+SpeciesB,1,1,0,0,0.00,0.00,0.00,0,1,0,0

@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  reproducibility-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Syntax-check Python utilities
+        run: python -m py_compile bin/*.py
+
+      - name: Syntax-check shell scripts
+        run: bash -n scripts/run_orthofinder.sh
+
+      - name: Run classification against the synthetic fixture
+        run: |
+          python bin/OrthoFinderDataProcessor.py test_output \
+            --orthofinder_dir example_data/orthofinder \
+            --prt_dir example_data/protein \
+            --hog-filename N1.tsv
+          rm -f test_output/OrthoFinderDataProcessor.log
+
+      - name: Compare against expected output
+        run: diff -r test_output example_data/expected_output
+
+      - name: Independently verify cLSG classification
+        run: |
+          python bin/CLSGClassificationVerifier.py \
+            --hog-tsv example_data/orthofinder/Phylogenetic_Hierarchical_Orthogroups/N1.tsv \
+            --results-dir test_output \
+            --report verification_report.tsv

@@ -1,0 +1,14 @@
+# outputs
+run_*/
+results_*/
+*.log
+
+# python
+__pycache__/
+*.pyc
+*.pyo
+
+# editors / OS
+.vscode/
+.idea/
+.DS_Store

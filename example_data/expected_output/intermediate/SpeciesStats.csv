@@ -1,0 +1,4 @@
+Species,Total_Proteins,Clustered_Total,Species_Specific_Unclustered,Species_Specific_Clustered
+Outgroup,2,1,1,0
+SpeciesA,4,2,2,1
+SpeciesB,1,1,0,0

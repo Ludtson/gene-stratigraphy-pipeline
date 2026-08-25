@@ -1,0 +1,1 @@
+(Outgroup:1,(SpeciesA:1,SpeciesB:1)N1:1)N0;

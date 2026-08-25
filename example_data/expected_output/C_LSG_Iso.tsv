@@ -1,0 +1,6 @@
+Species	Gene_ID	C_LSG_Iso_Node	HOG_ID
+SpeciesA	gene_a1	N1	N1.HOG0000000
+SpeciesA	gene_a2	species_specific_clustered	N1.HOG0000001
+SpeciesA	gene_a3	species_specific_unclustered	NA
+SpeciesA	gene_a4	species_specific_unclustered	NA
+SpeciesB	gene_b1	N1	N1.HOG0000000

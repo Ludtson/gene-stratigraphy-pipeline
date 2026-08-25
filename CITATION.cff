@@ -1,0 +1,27 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite it as below."
+title: "Gene Stratigraphy Pipeline"
+abstract: >-
+  A pipeline for stratifying genes by phylogenetic depth of origin from
+  OrthoFinder's Hierarchical Orthogroups output, producing candidate
+  lineage-specific genes cross-checked against OrthoFinder's flat
+  Orthogroups and pairwise Orthologues outputs. Stage 2 of the LINGUA
+  comparative genomics framework, developed as part of dissertation work
+  on the identification and evolutionary analysis of de novo genes (DNGs).
+authors:
+  - family-names: Owoyemi
+    given-names: Adekola
+    orcid: "https://orcid.org/0000-0003-4251-5777"
+    affiliation: "Protein Evolution Lab (Casola Lab), Texas A&M University"
+  - name: "Protein Evolution Lab (Casola Lab), Texas A&M University"
+repository-code: "https://github.com/Ludtson/gene-stratigraphy-pipeline"
+license: MIT
+version: 1.0.0
+date-released: "2026-08-25"
+keywords:
+  - comparative genomics
+  - gene stratigraphy
+  - orthology
+  - lineage-specific genes
+  - de novo genes
+  - bioinformatics pipeline
