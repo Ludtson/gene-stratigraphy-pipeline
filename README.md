@@ -4,6 +4,30 @@ A pipeline for stratifying genes by phylogenetic depth of origin, using OrthoFin
 
 This is not an orthology inference tool. OrthoFinder does that. This tool consumes OrthoFinder's output and organizes it into a phylogenetically resolved layering — a stratigraphy — of a species' gene content.
 
+## Pipeline overview
+
+```mermaid
+flowchart TD
+    A[("~798k Longest Isoforms<br/>(Longest Isoforms from Step 1)")]
+    B["Orthology Analysis<br/>All-vs-All Clustering &amp; Tree Inference<br/>OrthoFinder (DIAMOND)"]
+    C["Orthologous Groups (HOGs)<br/>&amp; Node-Labeled Species Tree"]
+    D["Unclustered Genes"]
+    E["Node Placement<br/>Lineage-Specific Genes"]
+    F[("Candidate Lineage-Specific Genes<br/>(cLSGs) ~192K Dataset")]
+    G["Sequence Extraction<br/>Filter Source FASTA using Target IDs"]
+    H["CLSG Sequences<br/>Lineage- &amp; Species-Specific FASTA"]
+
+    A --> B
+    B --> C
+    B --> D
+    C --> E
+    D -- "directly as<br/>species-specific" --> E
+    E --> F
+    F --> G
+    A -. "source FASTA" .-> G
+    G --> H
+```
+
 ## What stratigraphy is useful for
 
 - **Prioritizing candidates for de novo gene (DNG) identification.** Manually inspecting every gene in a proteome for evidence of lineage-specific or de novo origin is not tractable. Stratigraphy narrows a whole proteome down to the genes actually worth deeper scrutiny — phylogenetic placement, synteny, ORF-emergence tracing — instead of starting from everything.
