@@ -103,8 +103,10 @@ Reads OrthoFinder's results and produces the stratified candidate lineage-specif
 ```bash
 python bin/OrthoFinderDataProcessor.py output_dir \
   --orthofinder_dir step2_output/orthofinder \
-  --prt_dir step1_output
+  --prt_dir step2_output/protein
 ```
+
+**`--prt_dir` must point at `step2_output/protein` (the copy `run_orthofinder.sh` made), not Step 1's own output directory.** Unclustered-gene detection looks up each species' protein FASTA by the exact species name OrthoFinder used internally (e.g. `C_cavernarum.faa`) directly under `--prt_dir` — no suffix handling, no species-map fallback for this lookup. `run_orthofinder.sh`'s `protein/` subdirectory always has that clean name already, because that's the same copy it fed to OrthoFinder (stripping Step 1's fixed `<species>_final.faa` naming convention when no map file is given — see `run_orthofinder.sh -h`). Step 1's raw output directory generally won't match, and a mismatch fails silently: a logged warning per species, not a crash, but unclustered genes for that species go undetected.
 
 Key options:
 
