@@ -225,10 +225,15 @@ class OrthoFinderDataProcessor:
         per_species_summary_data = []
         global_summary_node_data = {}
 
-        nodes_up_tree = self.tree_parser.find_nodes_up_tree(species_basename)
-        nodes_up_tree = [species_basename] + nodes_up_tree
-        if not nodes_up_tree:
-            logging.warning(f"Could not find ancestral path for {species_basename}. Skipping.")
+        try:
+            nodes_up_tree = [species_basename] + self.tree_parser.find_nodes_up_tree(species_basename)
+        except ValueError:
+            # find_nodes_up_tree raises (not returns []) when species_basename
+            # isn't a node in the tree -- e.g. a species-name mismatch between
+            # the HOG table and the tree file. Catch it here so one bad name
+            # only skips this species, rather than propagating uncaught out
+            # of run()'s per-species loop and aborting every other species.
+            logging.warning(f"'{species_basename}' not found in the species tree. Skipping this species.")
             return [], 0, 0, 0, {}
             
         HOG_ID_levels = {}
