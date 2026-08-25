@@ -32,7 +32,11 @@ set -euo pipefail
 #
 # Notes:
 # - Conda environment must be activated before running this script.
-# - Map file is optional. If not provided, original FASTA filenames are used.
+# - Map file is optional. If not provided, species names are derived from
+#   FASTA filenames, stripping a trailing "_final" suffix if present (Step
+#   1's fixed output naming convention: <species>_final.faa under
+#   5_final_proteins/). This keeps inferred species names consistent with
+#   a rooted species tree built from clean species names.
 #
 # Usage:
 #   bash run_orthofinder.sh -i <input_dir> -o <output_dir> [-t threads] [-m map_file]
@@ -186,10 +190,18 @@ if [[ -n "$map_file" ]]; then
     done
 
 else
-    log WARN "No map file provided — using original FASTA names"
+    log WARN "No map file provided — deriving species names from filenames"
 
     for f in "$input_dir"/*.fa "$input_dir"/*.faa "$input_dir"/*.fasta; do
-        cp "$f" "$output_dir/protein/"
+        fname=$(basename "$f")
+        ext="${fname##*.}"
+        base="${fname%.*}"
+        # Step 1 (protein-preprocessing-isoform-pipeline) writes
+        # <species>_final.<ext> under 5_final_proteins/ -- strip that
+        # suffix so the inferred species name matches a rooted species
+        # tree built from clean species names (e.g. via -s).
+        species="${base%_final}"
+        cp "$f" "$output_dir/protein/${species}.${ext}"
     done
 fi
 
