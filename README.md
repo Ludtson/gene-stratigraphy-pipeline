@@ -8,12 +8,12 @@ This is not an orthology inference tool. OrthoFinder does that. This tool consum
 
 ```mermaid
 flowchart TD
-    A[("~798k Longest Isoforms<br/>(Longest Isoforms from Step 1)")]
+    A[("~798k Longest Isoforms<br/>Longest Isoforms from Step 1")]
     B["Orthology Analysis<br/>All-vs-All Clustering &amp; Tree Inference<br/>OrthoFinder (DIAMOND)"]
     C["Orthologous Groups (HOGs)<br/>&amp; Node-Labeled Species Tree"]
     D["Unclustered Genes"]
     E["Node Placement<br/>Lineage-Specific Genes"]
-    F[("Candidate Lineage-Specific Genes<br/>(cLSGs) ~192K Dataset")]
+    F[("Candidate Lineage-Specific Genes<br/>cLSGs, ~192K Dataset")]
     G["Sequence Extraction<br/>Filter Source FASTA using Target IDs"]
     H["CLSG Sequences<br/>Lineage- &amp; Species-Specific FASTA"]
 
