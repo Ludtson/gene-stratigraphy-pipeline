@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import os
+import re
 import argparse
 import logging
 import csv
@@ -84,16 +85,26 @@ class OrthoFinderDataProcessor:
         logging.info("Logging initialized.")
 
     def _list_top_level(self, directory):
-        """Immediate children of directory, for error messages -- lets a
-        wrong or incomplete --orthofinder_dir be spotted at a glance
-        instead of just "not found somewhere in this tree"."""
+        """Contents of directory, for error messages -- lets a wrong or
+        incomplete --orthofinder_dir be spotted at a glance instead of
+        just "not found somewhere in this tree". Descends through any
+        chain of single-entry wrapper directories (e.g. orthofinder_dir/
+        containing only Results_Aug25/) so the message shows the actual
+        results layout, not just an uninformative single subfolder name."""
+        current = directory
         try:
-            entries = sorted(os.listdir(directory))
+            entries = sorted(os.listdir(current))
         except OSError as e:
             return f"(could not list {directory}: {e})"
+        while len(entries) == 1 and os.path.isdir(os.path.join(current, entries[0])):
+            current = os.path.join(current, entries[0])
+            try:
+                entries = sorted(os.listdir(current))
+            except OSError as e:
+                return f"(could not list {current}: {e})"
         if not entries:
-            return f"{directory} is empty"
-        return f"{directory} contains: {', '.join(entries)}"
+            return f"{current} is empty"
+        return f"{current} contains: {', '.join(entries)}"
 
     def _find_file(self, directory, filename):
         for root, _, files in os.walk(directory):
@@ -116,6 +127,36 @@ class OrthoFinderDataProcessor:
             f"{dirname}/ not found anywhere under {directory}. "
             f"{self._list_top_level(directory)}"
         )
+
+    def _find_hog_file(self):
+        """
+        Wraps _find_file for --hog-filename specifically: if the requested
+        file (default N0.tsv) isn't there, check whether any other N#.tsv
+        hierarchical orthogroup file exists and suggest it. This is the
+        exact, common outgroup situation the README documents -- an
+        outgroup pushes the true root out one level and N0.tsv is never
+        written -- so a bare "not found" here is worse than useless, it
+        actively hides the fix that's usually one flag away.
+        """
+        try:
+            return self._find_file(self.orthofinder_dir, self.hog_filename)
+        except FileNotFoundError:
+            available = set()
+            for root, _, files in os.walk(self.orthofinder_dir):
+                for f in files:
+                    if re.fullmatch(r'N\d+\.tsv', f):
+                        available.add(f)
+            if available:
+                ordered = sorted(available, key=lambda n: int(n[1:-4]))
+                raise FileNotFoundError(
+                    f"{self.hog_filename} not found under {self.orthofinder_dir}, but "
+                    f"found: {', '.join(ordered)}. If an outgroup was used and this "
+                    f"version of OrthoFinder didn't write N0.tsv, pass the right one "
+                    f"via --hog-filename (see the README's \"Why --hog-filename might "
+                    f"not be N0.tsv\" -- check Species_Tree/SpeciesTree_rooted_node_"
+                    f"labels.txt to confirm which node is correct, don't just guess)."
+                )
+            raise
 
     def initialize_processors(self):
         logging.info("Initializing data processors...")
@@ -141,7 +182,7 @@ class OrthoFinderDataProcessor:
                     f"missing that data. If this OrthoFinder version renamed or moved "
                     f"it, pass the actual filename via --stats-filename."
                 )
-            hog_file = self._find_file(self.orthofinder_dir, self.hog_filename)
+            hog_file = self._find_hog_file()
             self.n0_sorter = N0OrthoGeneSorter(hog_file, self.species_map_file)
             tree_file = self._find_file(self.orthofinder_dir, self.tree_filename)
             self.tree_parser = SpeciesTree(file_path=tree_file, species_map_file=self.species_map_file)
