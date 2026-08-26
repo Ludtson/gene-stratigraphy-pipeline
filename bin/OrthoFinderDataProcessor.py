@@ -155,7 +155,7 @@ class OrthoFinderDataProcessor:
                     f"via --hog-filename (see the README's \"Why --hog-filename might "
                     f"not be N0.tsv\" -- check Species_Tree/SpeciesTree_rooted_node_"
                     f"labels.txt to confirm which node is correct, don't just guess)."
-                )
+                ) from None
             raise
 
     def initialize_processors(self):
