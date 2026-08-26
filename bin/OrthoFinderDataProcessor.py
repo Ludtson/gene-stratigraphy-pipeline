@@ -83,13 +83,28 @@ class OrthoFinderDataProcessor:
         logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] - %(message)s", handlers=[logging.FileHandler(log_file, mode='w'), logging.StreamHandler()])
         logging.info("Logging initialized.")
 
+    def _list_top_level(self, directory):
+        """Immediate children of directory, for error messages -- lets a
+        wrong or incomplete --orthofinder_dir be spotted at a glance
+        instead of just "not found somewhere in this tree"."""
+        try:
+            entries = sorted(os.listdir(directory))
+        except OSError as e:
+            return f"(could not list {directory}: {e})"
+        if not entries:
+            return f"{directory} is empty"
+        return f"{directory} contains: {', '.join(entries)}"
+
     def _find_file(self, directory, filename):
         for root, _, files in os.walk(directory):
             if filename in files:
                 found_path = os.path.join(root, filename)
                 logging.info(f"Found {filename} at {found_path}")
                 return found_path
-        raise FileNotFoundError(f"{filename} not found in {directory}")
+        raise FileNotFoundError(
+            f"{filename} not found anywhere under {directory}. "
+            f"{self._list_top_level(directory)}"
+        )
 
     def _find_dir(self, directory, dirname):
         for root, dirs, _ in os.walk(directory):
@@ -97,7 +112,10 @@ class OrthoFinderDataProcessor:
                 found_path = os.path.join(root, dirname)
                 logging.info(f"Found {dirname}/ at {found_path}")
                 return found_path
-        raise FileNotFoundError(f"{dirname}/ not found in {directory}")
+        raise FileNotFoundError(
+            f"{dirname}/ not found anywhere under {directory}. "
+            f"{self._list_top_level(directory)}"
+        )
 
     def initialize_processors(self):
         logging.info("Initializing data processors...")
