@@ -104,10 +104,25 @@ class OrthoFinderDataProcessor:
         if not self.orthofinder_dir:
             logging.warning("OrthoFinder directory not provided."); return
         try:
-            stats_file = self._find_file(self.orthofinder_dir, self.stats_filename)
             self.stats_converted_path = self.intermediate_dir / "SpeciesStats.csv"
-            self.stats_processor = OrthoFinderStatsProcessor(stats_file, self.stats_converted_path, self.species_map_file)
-            self.stats_processor.process_stats()
+            try:
+                stats_file = self._find_file(self.orthofinder_dir, self.stats_filename)
+                self.stats_processor = OrthoFinderStatsProcessor(stats_file, self.stats_converted_path, self.species_map_file)
+                self.stats_processor.process_stats()
+            except FileNotFoundError:
+                # Not required for classification itself -- it only feeds one
+                # section of the final merged global_summary.csv. OrthoFinder's
+                # output layout has changed across versions before (e.g.
+                # N0.tsv itself was dropped in v3.1.4+), so a missing/renamed
+                # stats file shouldn't abort the whole run the way a missing
+                # HOG table or species tree must -- those two are genuinely
+                # required and still raise below.
+                logging.warning(
+                    f"{self.stats_filename} not found under {self.orthofinder_dir} -- "
+                    f"SpeciesStats.csv will be skipped and global_summary.csv will be "
+                    f"missing that data. If this OrthoFinder version renamed or moved "
+                    f"it, pass the actual filename via --stats-filename."
+                )
             hog_file = self._find_file(self.orthofinder_dir, self.hog_filename)
             self.n0_sorter = N0OrthoGeneSorter(hog_file, self.species_map_file)
             tree_file = self._find_file(self.orthofinder_dir, self.tree_filename)
