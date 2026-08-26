@@ -504,9 +504,16 @@ class OrthoFinderDataProcessor:
                 logging.info(f"Cross-check excluded {len(self.cross_checker.exclusions)} candidate genes "
                              f"total across all species; log written to {exclusion_log_path}")
 
+        except FileNotFoundError as e:
+            # Missing/misnamed input file -- initialize_processors() already
+            # logged a specific, actionable message (what was expected, what
+            # was actually found). The full stack trace adds nothing for
+            # this case and just buries that message under noise, so it's
+            # deliberately omitted here (unlike the genuine-bug case below).
+            logging.critical(f"Cannot proceed: {e}")
         except Exception as e:
             logging.critical(f"A critical error occurred in the main pipeline: {e}", exc_info=True)
-        
+
         logging.info("Pipeline finished.")
     def _save_gene_ids(self, filepath, ids):
         try:
