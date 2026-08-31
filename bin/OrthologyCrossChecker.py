@@ -3,40 +3,31 @@
 """
 OrthologyCrossChecker.py
 
-Cross-checks candidate lineage-specific genes (cLSGs) produced from the
-Hierarchical Orthogroups (HOG) table against two other, independent
-OrthoFinder outputs, and reports which candidates have a conflicting
-ortholog elsewhere.
+Cross-checks candidate species-specific genes against OrthoFinder's
+pairwise Orthologues output (reciprocal-best-hit, tree-refined), and
+reports which candidates have a conflicting ortholog there.
 
-Why this exists: the HOG table used by OrthoFinderDataProcessor
-(N0.tsv/N1.tsv/etc., selected via --hog-filename) is structurally blind to
-any species outside the clade covered by that specific node. If an
-outgroup is used to work around OrthoFinder not emitting N0.tsv (see the
-main pipeline's README), every species outside the analyzed clade -- not
-just a nominal "outgroup" -- is invisible to the HOG-based method, for any
-node file chosen. A gene can therefore look like a candidate
-lineage-specific gene purely because the HOG table cannot see the species
-it actually has a relationship with.
+Why this exists: the primary classification (see
+OrthogroupsStratigraphyClassifier.py) determines species-specificity from
+Orthogroups.tsv's clustering. Clustering can under-merge -- miss a real
+relationship -- due to sequence divergence, domain rearrangement, or
+alignment noise, even though Orthogroups.tsv itself has no blind spot for
+species coverage the way a Hierarchical Orthogroups table does. Pairwise
+Orthologues is a genuinely different, independent method (reciprocal best
+hit, not similarity clustering), so it can catch a real ortholog that
+clustering missed.
 
-Two independent checks, in order:
+(This class used to also check Orthogroups.tsv itself, back when the
+primary classification came from a HOG table and Orthogroups.tsv was the
+downstream safety net for the HOG table's outgroup blind spot. Now that
+Orthogroups.tsv IS the primary source, checking it against itself would be
+circular, so only the pairwise check remains.)
 
-1. Primary: Orthogroups.tsv (OrthoFinder's flat, whole-dataset clustering).
-   Same species-column table shape as the HOG files, but always includes
-   every species run through OrthoFinder, including any outgroup. If a
-   candidate gene's Orthogroup row contains any other species, it is not
-   truly species-specific.
-
-2. Secondary: pairwise Orthologues_<species>/<species>__v__<other>.tsv
-   files (reciprocal-best-hit, tree-refined). Only checked for candidates
-   that already survived the primary check, as a higher-precision second
-   pass -- these files are per-species-pair, so this check is more
-   expensive to run than the primary one.
-
-A candidate flagged by either check is excluded, and the reason is
-recorded so the exclusion is auditable, not silent.
+A candidate flagged here is excluded, and the reason is recorded so the
+exclusion is auditable, not silent.
 
 Author: Adekola Owoyemi (Casola Lab, Texas A&M University)
-Version: 1.0.0
+Version: 2.0.0
 """
 
 import csv
@@ -45,104 +36,29 @@ from pathlib import Path
 
 csv.field_size_limit(min(sys.maxsize, 2**31 - 1))
 
-__version__ = "1.0.0"
+__version__ = "2.0.0"
 __author__ = "Adekola Owoyemi (Casola Lab, Texas A&M University)"
 
 
 class OrthologyCrossChecker:
-    def __init__(self, orthogroups_tsv_path=None, orthologues_dir=None):
+    def __init__(self, orthologues_dir=None):
         """
-        orthogroups_tsv_path: path to OrthoFinder's Orthogroups.tsv.
         orthologues_dir: path to OrthoFinder's Orthologues/ directory,
             containing one Orthologues_<species>/ subdirectory per species,
-            each with <species>__v__<other>.tsv pairwise files.
-        Either or both may be omitted; whichever checks have their input
-        provided are run, and the rest are skipped (with a warning), rather
-        than failing outright -- useful for a rerun where only one file is
-        available.
+            each with <species>__v__<other>.tsv pairwise files. If omitted,
+            filter_candidates() returns every candidate unchanged (with a
+            warning, not silently) -- useful for a rerun where the file
+            genuinely isn't available.
         """
-        self.orthogroups_tsv_path = Path(orthogroups_tsv_path) if orthogroups_tsv_path else None
         self.orthologues_dir = Path(orthologues_dir) if orthologues_dir else None
 
-        # {orthogroup_id: {species: set(genes)}}
-        self.og_species_genes = {}
-        # {(species, gene_id): orthogroup_id}
-        self.gene_to_og = {}
-        self.species_in_og_table = []
-
-        self._orthogroups_loaded = False
         # Cache of parsed pairwise files, keyed by species, to avoid
         # re-reading the same file for every gene of that species.
         self._pairwise_cache = {}
 
         # Exclusion log entries: {gene_id, species, original_status,
-        # check, conflicting_species, conflicting_gene, source_id}
+        # check, conflicting_species, conflicting_gene}
         self.exclusions = []
-
-    def load_orthogroups_table(self):
-        """
-        Parses Orthogroups.tsv. Same shape as the HOG tables, but with a
-        single leading metadata column ("Orthogroup") instead of three
-        ("HOG", "OG", "Gene Tree Parent Clade").
-        """
-        if self._orthogroups_loaded or not self.orthogroups_tsv_path:
-            return
-
-        with open(self.orthogroups_tsv_path, "r", newline="", encoding="utf-8") as fh:
-            reader = csv.reader(fh, delimiter="\t")
-            try:
-                header = next(reader)
-            except StopIteration:
-                raise ValueError(f"Orthogroups table is empty: {self.orthogroups_tsv_path}")
-
-            if len(header) < 2:
-                raise ValueError(
-                    f"Orthogroups table {self.orthogroups_tsv_path} has no species columns "
-                    f"(expected 'Orthogroup', then one column per species)."
-                )
-            self.species_in_og_table = header[1:]
-
-            for row in reader:
-                if not row:
-                    continue
-                og_id = row[0].strip()
-                if not og_id:
-                    continue
-
-                species_genes = {}
-                for i, species in enumerate(self.species_in_og_table):
-                    col_idx = i + 1
-                    if col_idx >= len(row):
-                        continue
-                    cell = row[col_idx].strip()
-                    if not cell:
-                        continue
-                    genes = [g.strip() for g in cell.split(",") if g.strip()]
-                    if genes:
-                        species_genes[species] = set(genes)
-                        for gene_id in genes:
-                            self.gene_to_og.setdefault((species, gene_id), og_id)
-
-                self.og_species_genes[og_id] = species_genes
-
-        self._orthogroups_loaded = True
-
-    def check_against_orthogroups(self, species, gene_id):
-        """
-        Returns a sorted list of other species sharing this gene's flat
-        Orthogroup, or an empty list if the gene is unique to `species` (or
-        not found at all -- absence here is not itself a conflict).
-        """
-        if not self.orthogroups_tsv_path:
-            return []
-        self.load_orthogroups_table()
-
-        og_id = self.gene_to_og.get((species, gene_id))
-        if og_id is None:
-            return []
-
-        species_genes = self.og_species_genes.get(og_id, {})
-        return sorted(sp for sp, genes in species_genes.items() if sp != species and genes)
 
     def _load_pairwise_files_for_species(self, species):
         """
@@ -155,6 +71,10 @@ class OrthologyCrossChecker:
             return self._pairwise_cache[species]
 
         gene_to_partners = {}
+        if not self.orthologues_dir:
+            self._pairwise_cache[species] = gene_to_partners
+            return gene_to_partners
+
         species_dir = self.orthologues_dir / f"Orthologues_{species}"
 
         if not species_dir.is_dir():
@@ -189,7 +109,7 @@ class OrthologyCrossChecker:
         """
         Returns a list of (other_species, other_gene_id) tuples this gene
         is paired with in OrthoFinder's pairwise Orthologues output, or an
-        empty list if none (or if --orthologues-dir wasn't provided).
+        empty list if none (or if orthologues_dir wasn't provided).
         """
         if not self.orthologues_dir:
             return []
@@ -198,30 +118,21 @@ class OrthologyCrossChecker:
 
     def filter_candidates(self, species, candidate_genes, original_status_lookup=None):
         """
-        Given a species and its set of candidate cLSG gene IDs, returns the
-        subset that survives both cross-checks, and records every exclusion
-        (with reason) in self.exclusions.
+        Given a species and its set of candidate species-specific gene IDs,
+        returns the subset that survives the pairwise-Orthologues check,
+        and records every exclusion (with reason) in self.exclusions.
 
         original_status_lookup: optional {gene_id: status_label} (e.g.
         "species_specific_clustered" / "species_specific_unclustered") used
         only to make the exclusion log more informative.
         """
+        if not self.orthologues_dir:
+            return set(candidate_genes)
+
         survivors = set()
 
         for gene_id in candidate_genes:
             original_status = (original_status_lookup or {}).get(gene_id, "unknown")
-
-            og_conflicts = self.check_against_orthogroups(species, gene_id)
-            if og_conflicts:
-                self.exclusions.append({
-                    "species": species,
-                    "gene_id": gene_id,
-                    "original_status": original_status,
-                    "check": "orthogroups",
-                    "conflicting_species": ";".join(og_conflicts),
-                    "conflicting_gene": "",
-                })
-                continue
 
             pairwise_hits = self.check_against_pairwise_orthologues(species, gene_id)
             if pairwise_hits:

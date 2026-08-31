@@ -260,10 +260,65 @@ class SpeciesTree:
             
         return ancestors
 
+    def get_mrca(self, species_names):
+        """
+        Returns the name of the most recent common ancestor (MRCA) node of a
+        set of species (leaf names), computed directly from tree topology.
+
+        This is the mechanism for deriving stratigraphic depth from
+        Orthogroups.tsv (flat clustering, always includes every species,
+        never blind to an outgroup) instead of a Hierarchical Orthogroups
+        table (which is structurally blind to any species outside the node
+        the chosen N?.tsv file covers): given the set of species sharing a
+        gene's orthogroup, the MRCA of that set on the real species tree is
+        the correct stratigraphic node, independent of which HOG file
+        happened to be available.
+
+        Args:
+            species_names: iterable of species (leaf) names. Must contain at
+                least one name.
+
+        Returns:
+            str: the clean name of the MRCA node. If only one species is
+            given, returns that species' own name (it is its own MRCA).
+
+        Raises a ValueError if any name isn't a node in the tree, or if
+        species_names is empty.
+        """
+        names = list(species_names)
+        if not names:
+            raise ValueError("get_mrca() requires at least one species name.")
+        if len(names) == 1:
+            if not self._find_node(names[0]):
+                raise ValueError(f"Species {names[0]!r} not found in the tree.")
+            return names[0]
+
+        # Ancestor chains, root-most last is not required here -- since every
+        # node's chain of ancestors is itself a path to the root, the
+        # intersection of all species' ancestor-chains is exactly the set of
+        # their common ancestors, and that set forms a single chain too. The
+        # MRCA is the most specific (deepest) member of that chain: the one
+        # with the most ancestors of its own.
+        common_ancestors = None
+        for name in names:
+            node = self._find_node(name)
+            if not node:
+                raise ValueError(f"Species {name!r} not found in the tree.")
+            ancestors = set(self.find_nodes_up_tree(name))
+            common_ancestors = ancestors if common_ancestors is None else (common_ancestors & ancestors)
+
+        if not common_ancestors:
+            raise ValueError(
+                f"No common ancestor found for {names} -- they may not all be leaves "
+                f"of the same tree."
+            )
+
+        return max(common_ancestors, key=lambda n: len(self.find_nodes_up_tree(n)))
+
     def find_sister_species_to_node(self, focal_node_name):
         """
         REQUIRED METHOD
-        Finds all species (leaves) that are descendants of the sister node(s) 
+        Finds all species (leaves) that are descendants of the sister node(s)
         to the focal node.
         
         Args:
