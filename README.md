@@ -1,6 +1,6 @@
 # Gene Stratigraphy Pipeline
 
-A pipeline for stratifying genes by phylogenetic depth of origin, using OrthoFinder's Hierarchical Orthogroups (HOG) output across a rooted species tree. For each focal species, every gene is assigned to the tree node at which its orthogroup first appears — from deeply conserved (shared with distant relatives) down to apparently private to that species alone (a candidate lineage-specific gene, or cLSG).
+A pipeline for stratifying genes by phylogenetic depth of origin, using OrthoFinder's flat Orthogroups output (`Orthogroups.tsv`) and a rooted species tree. For each focal species, every gene is assigned to the tree node at which its orthogroup first appears — from deeply conserved (shared with distant relatives) down to apparently private to that species alone (a candidate lineage-specific gene, or cLSG). The node is computed as the most recent common ancestor (MRCA), on the species tree, of every species sharing that gene's orthogroup — not read off a Hierarchical Orthogroups (HOG) table, which is structurally blind to any species outside the specific node it covers (see "Why `Orthogroups.tsv`, not a HOG table" below).
 
 This is not an orthology inference tool. OrthoFinder does that. This tool consumes OrthoFinder's output and organizes it into a phylogenetically resolved layering — a stratigraphy — of a species' gene content.
 
@@ -10,7 +10,7 @@ This is not an orthology inference tool. OrthoFinder does that. This tool consum
 flowchart TD
     A[("~798k Longest Isoforms<br/>Longest Isoforms from Step 1")]
     B["Orthology Analysis<br/>All-vs-All Clustering &amp; Tree Inference<br/>OrthoFinder (DIAMOND)"]
-    C["Orthologous Groups (HOGs)<br/>&amp; Node-Labeled Species Tree"]
+    C["Flat Orthogroups<br/>&amp; Node-Labeled Species Tree"]
     D["Unclustered Genes"]
     E["Node Placement<br/>Lineage-Specific Genes"]
     F[("Candidate Lineage-Specific Genes<br/>cLSGs, ~192K Dataset")]
@@ -32,8 +32,8 @@ flowchart TD
 
 - **Prioritizing candidates for de novo gene (DNG) identification.** Manually inspecting every gene in a proteome for evidence of lineage-specific or de novo origin is not tractable. Stratigraphy narrows a whole proteome down to the genes actually worth deeper scrutiny — phylogenetic placement, synteny, ORF-emergence tracing — instead of starting from everything.
 - **A phylogenetically resolved view of gene content**, useful beyond DNG work: gene family turnover, lineage-specific expansions, and comparative genomics questions about which genes are conserved versus restricted to a given clade.
-- **Genuinely multi-species, not pairwise.** Many gene-stratigraphy-style analyses compare one species against one reference at a time, typically via BLAST. This pipeline classifies each gene against an entire rooted species tree at once, using OrthoFinder's hierarchical orthogroups rather than pairwise best-hit search — a gene's stratigraphic placement reflects its relationship to every species in the tree simultaneously, not just whichever one it happened to be compared against.
-- **A fast, repeatable first pass**, not a final answer. OrthoFinder's HOG-based clustering can miss real relationships — a gene can look species-specific purely because the specific hierarchical level examined structurally cannot see every other species (see the cross-check documentation below). Every output here is a *candidate*, meant to be filtered further before being treated as biologically real.
+- **Genuinely multi-species, not pairwise.** Many gene-stratigraphy-style analyses compare one species against one reference at a time, typically via BLAST. This pipeline classifies each gene against an entire rooted species tree at once — a gene's stratigraphic placement (its MRCA) reflects its relationship to every species in the tree simultaneously, not just whichever one it happened to be compared against.
+- **A fast, repeatable first pass**, not a final answer. Clustering can under-merge — miss a real relationship due to sequence divergence, domain rearrangement, or alignment noise (see the pairwise cross-check documentation below). Every output here is a *candidate*, meant to be filtered further before being treated as biologically real.
 
 ## Role in LINGUA
 
@@ -106,42 +106,46 @@ python bin/OrthoFinderDataProcessor.py output_dir \
   --prt_dir step2_output/protein
 ```
 
-**`--prt_dir` must point at `step2_output/protein` (the copy `run_orthofinder.sh` made), not Step 1's own output directory.** Unclustered-gene detection looks up each species' protein FASTA by the exact species name OrthoFinder used internally (e.g. `C_cavernarum.faa`) directly under `--prt_dir` — no suffix handling, no species-map fallback for this lookup. `run_orthofinder.sh`'s `protein/` subdirectory always has that clean name already, because that's the same copy it fed to OrthoFinder (stripping Step 1's fixed `<species>_final.faa` naming convention when no map file is given — see `run_orthofinder.sh -h`). Step 1's raw output directory generally won't match, and a mismatch fails silently: a logged warning per species, not a crash, but unclustered genes for that species go undetected.
+**`--prt_dir` must point at `step2_output/protein` (the copy `run_orthofinder.sh` made), not Step 1's own output directory.** `--prt_dir` is where the *entire gene universe to classify* comes from — every gene in a species' protein FASTA gets classified, not just genes already in `Orthogroups.tsv` (absence from `Orthogroups.tsv` is how `species_specific_unclustered` genes are identified in the first place). Each species' protein FASTA is looked up by the exact species name OrthoFinder used internally (e.g. `C_cavernarum.faa`) directly under `--prt_dir` — no suffix handling, no species-map fallback for this lookup. `run_orthofinder.sh`'s `protein/` subdirectory always has that clean name already, because that's the same copy it fed to OrthoFinder (stripping Step 1's fixed `<species>_final.faa` naming convention when no map file is given — see `run_orthofinder.sh -h`). Step 1's raw output directory generally won't match, and a mismatch fails silently: a logged warning, and that species is skipped entirely rather than partially classified.
 
 Key options:
 
-- `--hog-filename` (default `N0.tsv`) — which hierarchical orthogroup file to classify from. See "Why `--hog-filename` might not be `N0.tsv`" below before assuming the default is right for your run.
-- `--orthogroups-filename` / `--orthologues-dirname` — inputs for the mandatory cross-check (see below); both are auto-located the same way every other required file is, so these rarely need to be set manually.
-- `--skip-cross-check` — explicitly disables the cross-check. Only use this if you understand the consequence (see below).
+- `--orthogroups-filename` (default `Orthogroups.tsv`) — the primary classification source; auto-located under `--orthofinder_dir`, rarely needs to be set manually.
+- `--hog-filename` (default `N0.tsv`) — optional, secondary. A Hierarchical Orthogroups file used only to cross-validate the primary classification, gene by gene (see "HOG cross-validation" below). Not required to run the pipeline; if not found, this validation is just skipped, with a warning, not an error. Point it at `N1.tsv`/`N2.tsv`/etc. if you want validation against a different node file, or use `--skip-hog-validation` to skip it entirely without even looking for one.
+- `--orthologues-dirname` — input for the pairwise cross-check (see below); auto-located the same way.
+- `--skip-cross-check` — explicitly disables the pairwise cross-check. Only use this if you understand the consequence (see below).
 - `--species-map` — optional CSV/TSV with `Species`/`Basename` columns to rename files to full species names in the output.
 
-## Why `--hog-filename` might not be `N0.tsv`
+## Why `Orthogroups.tsv`, not a HOG table
 
-OrthoFinder's Hierarchical Orthogroups (`Phylogenetic_Hierarchical_Orthogroups/N0.tsv`, `N1.tsv`, ...) represent orthogroups at every node of the species tree, not just the root. Per OrthoFinder's own documentation: *"If outgroup species are used, refer to `Species_Tree/SpeciesTree_rooted_node_labels.txt` to determine which N?.tsv file that contains the orthogroups you require."*
+Earlier versions of this pipeline classified genes directly from a Hierarchical Orthogroups (HOG) file (`Phylogenetic_Hierarchical_Orthogroups/N0.tsv`, `N1.tsv`, ...). That approach has a structural blind spot: whichever `N?.tsv` file is used, **every species outside the clade that node covers is invisible to it** — not just a nominal "outgroup," any species outside the chosen node, for any reason that file was chosen. Concretely, if an outgroup is used to work around OrthoFinder not emitting `N0.tsv` for the ingroup of interest (OrthoFinder's own README: *"If outgroup species are used, refer to `Species_Tree/SpeciesTree_rooted_node_labels.txt` to determine which N?.tsv file that contains the orthogroups you require"*), the outgroup has zero visibility in that file — every gene that's actually shared with it gets misclassified as narrower than it really is, and the outgroup itself can't be processed as a focal species at all, since it has no data in the HOG file to classify from.
 
-Two situations where the file you want isn't `N0.tsv`:
+`Orthogroups.tsv` — OrthoFinder's flat, whole-dataset clustering — has no such blind spot: it always includes every species OrthoFinder was run on. It doesn't carry per-node depth directly the way a HOG table does, but it doesn't need to: given the set of species sharing a gene's orthogroup, the correct stratigraphic node is the **most recent common ancestor (MRCA)** of that set on the actual species tree, computed directly from tree topology (`SpeciesTree.get_mrca`, `bin/OrthoFinderTreeParser.py`). `OrthogroupsStratigraphyClassifier.py` implements this and is the primary classification source.
 
-- **An outgroup was added deliberately** — e.g. because the OrthoFinder version in use doesn't emit `N0.tsv` for the ingroup of interest, so an extra outgroup species is included specifically to push the true root out one level, making the ingroup's root-level HOGs appear in `N1.tsv` instead. Confirm which file is correct by checking `SpeciesTree_rooted_node_labels.txt` directly — don't assume.
-- **A shallower node is of interest on purpose** — e.g. asking a within-genus question rather than a whole-species-tree question.
+A HOG table remains useful as an optional, secondary cross-validation — see below — but it's no longer required to run the pipeline at all.
 
-Either way, `--hog-filename` is a normal, fully overridable argument: point it at `N1.tsv`, `N2.tsv`, or any `Nk.tsv`.
+## HOG cross-validation (optional)
 
-**Whichever file is used, every species outside that node's clade is structurally invisible to classification.** This isn't specific to an "outgroup" as a special case — it's true of any species outside the chosen node, for any reason the file was chosen. That's exactly what the mandatory cross-check below exists to catch.
+If a HOG table is available (`--hog-filename`, default `N0.tsv`, auto-falls-back-and-suggests `N1.tsv`/etc. if not found), every gene visible in it is compared against the primary `Orthogroups.tsv`-derived node, using the same MRCA mechanism applied to the HOG table's own species membership instead. Disagreements are logged to `hog_disagreements.tsv`, each tagged with a diagnosed reason:
 
-## The mandatory cross-check
+- `missing_species_from_hog` — the gene's `Orthogroups.tsv` species set includes a species that has **zero actual entries anywhere** in the HOG table (not just "isn't a header column" — a species can be a header column with every cell empty, which is exactly the outgroup-blindness case above). This fully explains the disagreement.
+- `unexplained` — no missing species explains it. This is most likely genuine divergence between similarity clustering and tree reconciliation (HOG tables are built by a separate, later OrthoFinder step — gene-tree reconciliation against the species tree, which can split a flat orthogroup across nodes based on duplication/loss events) — not necessarily an error, but not assumed to be explained either.
 
-A gene can look like a candidate lineage-specific gene purely because the HOG file in use cannot see the species it actually has a relationship with — not because it's genuinely unique. `OrthologyCrossChecker` (`bin/OrthologyCrossChecker.py`) verifies every candidate against two other OrthoFinder outputs before it's treated as final:
+This never blocks the pipeline — every disagreement is logged, none change the primary classification. Skip it entirely (without even trying to find a HOG file) with `--skip-hog-validation`.
 
-1. **Primary: `Orthogroups.tsv`** — OrthoFinder's flat, whole-dataset clustering. Unlike the HOG files, this always includes every species OrthoFinder was run on, including any outgroup. If a candidate's Orthogroup contains any other species, it's excluded.
-2. **Secondary: pairwise `Orthologues/Orthologues_<species>/*.tsv`** — reciprocal-best-hit, tree-refined. Checked only for candidates that survive the primary pass, as a higher-precision second opinion.
+## Pairwise cross-check
 
-Every exclusion is logged (`cross_check_exclusions.tsv`: gene ID, original classification, which check caught it, which species/gene it conflicted with) — auditable, not silent. This is mandatory by default; `--skip-cross-check` is the explicit opt-out if the inputs genuinely aren't available.
+Clustering can under-merge — miss a real relationship due to sequence divergence, domain rearrangement, or alignment noise — even though `Orthogroups.tsv` itself has no blind spot for species coverage. `OrthologyCrossChecker` (`bin/OrthologyCrossChecker.py`) checks every candidate species-specific gene against OrthoFinder's pairwise `Orthologues/Orthologues_<species>/*.tsv` files (reciprocal-best-hit, tree-refined) — a genuinely independent method from clustering. A gene with a real pairwise ortholog is excluded, and the exclusion is logged (`cross_check_exclusions.tsv`: gene ID, original classification, conflicting species/gene) — auditable, not silent. Mandatory by default; `--skip-cross-check` is the explicit opt-out if the input genuinely isn't available.
 
-`c_lsg_summary.csv`/`global_summary.csv` report `total_candidate_percentage` (before the cross-check) and `verified_candidate_percentage` (after) side by side, so the effect of the cross-check is directly visible per species, not hidden behind a single changed number.
+`c_lsg_summary.csv`/`global_summary.csv` report `total_candidate_percentage` (before this check) and `verified_candidate_percentage` (after) side by side, so its effect is directly visible per species, not hidden behind a single changed number.
+
+## Stats validation (automatic when available)
+
+If OrthoFinder's own `Statistics_PerSpecies.tsv` is available (`--stats-filename`), this pipeline's computed species-specific-clustered and species-specific-unclustered counts are checked against OrthoFinder's own self-reported numbers for each species — both are ultimately derived from `Orthogroups.tsv`, so they should match exactly. A mismatch means this pipeline's own counting logic disagrees with OrthoFinder's and is logged to `stats_validation_mismatches.tsv`, worth investigating rather than trusting silently. This is a real check on the pipeline's own arithmetic, not a way to validate the HOG cross-validation above (`Statistics_PerSpecies.tsv` has zero visibility into HOG-table data at all — see `bin/OrthoFinderStatsProcessor.py`).
 
 ## Verifying results independently
 
-`bin/CLSGClassificationVerifier.py` re-derives ground truth directly from the HOG table, from scratch — it does not reuse any other class in this pipeline, so a shared bug can't silently cancel out and hide a real error. It checks that every "clustered" candidate's HOG really is private to that species, and every "unclustered" candidate really is absent from the HOG table entirely.
+`bin/CLSGClassificationVerifier.py` re-derives ground truth directly from a HOG table, from scratch — it does not reuse any other class in this pipeline, so a shared bug can't silently cancel out and hide a real error. It checks that every "clustered" candidate's HOG really is private to that species, and every "unclustered" candidate really is absent from the HOG table entirely — correctly treating a species with zero entries anywhere in the HOG table (structurally invisible to it, e.g. an outgroup) as not applicable, rather than flagging every one of that species' genes as a violation.
 
 ```bash
 python bin/CLSGClassificationVerifier.py \
@@ -157,24 +161,25 @@ Exits non-zero if any violation is found, so it can be used as a CI gate, not ju
 ```
 output_dir/
   <species>/
-    gene_IDs_by_node/       # gene IDs per phylogenetic node, plus the final candidate_lsg list
-    HOG_IDs_by_node/        # HOG IDs per phylogenetic node
-    proteins_by_node/       # candidate cLSG protein FASTA
+    gene_IDs_by_node/       # gene IDs per stratigraphic node (N0, N1, ..., species_specific_clustered/unclustered), plus the final candidate_lsg list
+    proteins_by_node/       # protein FASTA per node, same buckets, plus the final candidate_LSGs FASTA
     <species>_summary_per_node.csv
-  intermediate/              # SpeciesStats.csv, c_lsg_summary.csv, global_gene_counts_per_node.tsv
-  C_LSG_Iso.tsv               # every gene, every species, one row each
-  global_summary.csv          # canonical master table (merges the intermediate/ files)
-  cross_check_exclusions.tsv  # audit log of every cross-check exclusion
+  intermediate/                    # SpeciesStats.csv, c_lsg_summary.csv, global_gene_counts_per_node.tsv
+  C_LSG_Iso.tsv                    # every gene, every species, one row each (node + Orthogroup ID)
+  global_summary.csv               # canonical master table (merges the intermediate/ files)
+  cross_check_exclusions.tsv       # audit log of every pairwise cross-check exclusion
+  hog_disagreements.tsv            # audit log of every Orthogroups.tsv-vs-HOG-table disagreement (only if a HOG file was found)
+  stats_validation_mismatches.tsv  # audit log of any mismatch against OrthoFinder's own stats (only if the stats file was found)
   OrthoFinderDataProcessor.log
 ```
 
 ## Components (`bin/`)
 
 - `OrthoFinderDataProcessor.py` — orchestrates classification for every species
-- `OrthoFinderN0GeneSorter.py` — parses the HOG table into a queryable species/HOG/gene structure
-- `OrthoFinderTreeParser.py` — parses the rooted species tree, walks ancestry
-- `OrthologyCrossChecker.py` — the mandatory `Orthogroups.tsv`/pairwise-Orthologues cross-check
-- `CLSGClassificationVerifier.py` — independent, from-scratch verification against the HOG table
+- `OrthogroupsStratigraphyClassifier.py` — the primary classifier: parses `Orthogroups.tsv`, derives each gene's node via MRCA
+- `OrthoFinderTreeParser.py` — parses the rooted species tree, walks ancestry, computes MRCA
+- `OrthologyCrossChecker.py` — the mandatory pairwise-Orthologues cross-check
+- `CLSGClassificationVerifier.py` — independent, from-scratch verification against a HOG table
 - `OrthoFinderStatsProcessor.py` — converts OrthoFinder's per-species stats to CSV
 - `CSVFileMerger.py` — merges the intermediate tables into the master table
 - `FastaGeneFilter.py` — extracts a gene-ID subset from a FASTA file

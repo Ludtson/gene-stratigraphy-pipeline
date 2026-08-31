@@ -80,6 +80,13 @@ class CLSGClassificationVerifier:
         # {(species, gene_id): hog_id}
         self.gene_to_hog = {}
         self.species_in_hog_table = []
+        # Species with at least one actual (non-empty) HOG entry, as opposed
+        # to species_in_hog_table which is just the header row -- a species
+        # can be a header column with every cell empty (e.g. an outgroup a
+        # HOG file is structurally blind to), which is a fundamentally
+        # different situation from a single gene inexplicably missing. See
+        # _audit_clustered.
+        self.species_with_hog_data = set()
 
         self.violations = []
         self.total_clustered_checked = 0
@@ -138,6 +145,11 @@ class CLSGClassificationVerifier:
 
                 self.hog_species_genes[hog_id] = species_genes
 
+        self.species_with_hog_data = {
+            sp for species_genes in self.hog_species_genes.values()
+            for sp, genes in species_genes.items() if genes
+        }
+
     @staticmethod
     def _load_gene_id_list(path):
         """Loads a newline-delimited gene ID file. Returns an empty set if the file doesn't exist."""
@@ -187,6 +199,14 @@ class CLSGClassificationVerifier:
             hog_id = self.gene_to_hog.get((species, gene_id))
 
             if hog_id is None:
+                if species not in self.species_with_hog_data:
+                    # The whole species has zero entries anywhere in this
+                    # HOG file (e.g. an outgroup this HOG table is
+                    # structurally blind to) -- expected and explained, not
+                    # a violation. Every gene of this species would trigger
+                    # this same "missing" case, which is exactly why it's
+                    # not informative to flag individually.
+                    continue
                 self.violations.append({
                     "species": species,
                     "gene_id": gene_id,

@@ -21,7 +21,7 @@ cd gene-stratigraphy-pipeline
 ## Verifying a change
 
 Before proposing a change to the classification logic
-(`OrthoFinderDataProcessor.py`, `OrthoFinderN0GeneSorter.py`,
+(`OrthoFinderDataProcessor.py`, `OrthogroupsStratigraphyClassifier.py`,
 `OrthoFinderTreeParser.py`, `OrthologyCrossChecker.py`), run
 `CLSGClassificationVerifier.py` against the output to confirm it still
 reports zero violations:
