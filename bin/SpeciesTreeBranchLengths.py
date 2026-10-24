@@ -22,8 +22,7 @@ Steps:
 
 Sequences are taken from --protein-dir (<species>.fa/.faa/.fasta/.fas, the
 species name as in Orthogroups.tsv); FASTA IDs are the first word of the
-header. MAFFT and FastTree must be on PATH (both are OrthoFinder
-dependencies).
+header. MAFFT and FastTree (or fasttree) must be on PATH.
 
 Usage:
   python SpeciesTreeBranchLengths.py \\
@@ -288,9 +287,11 @@ def main():
     ap.add_argument("--version", action="version", version=__version__)
     a = ap.parse_args()
 
-    for tool in ("mafft", "FastTree"):
-        if not shutil.which(tool):
-            sys.exit(f"[ERROR] {tool} not found on PATH")
+    if not shutil.which("mafft"):
+        sys.exit("[ERROR] mafft not found on PATH")
+    fasttree = next((t for t in ("FastTree", "fasttree") if shutil.which(t)), None)
+    if not fasttree:
+        sys.exit("[ERROR] FastTree (or fasttree) not found on PATH")
 
     rooted = parse_newick(Path(a.tree).read_text(encoding="utf-8"))
     species = sorted(rooted.leaves())
@@ -350,7 +351,7 @@ def main():
         topo = work / "topology.nwk"
         topo.write_text(to_newick(rooted, lengths=False) + "\n", encoding="utf-8")
         env = dict(os.environ, OMP_NUM_THREADS=str(a.threads))
-        ft = run(["FastTree", "-quiet", "-nome", "-mllen", "-intree", str(topo), str(sup)], env=env)
+        ft = run([fasttree, "-quiet", "-nome", "-mllen", "-intree", str(topo), str(sup)], env=env)
         fitted = parse_newick(ft.strip())
 
         if splits(fitted) != splits(rooted):

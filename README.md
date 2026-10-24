@@ -51,6 +51,7 @@ The candidate list this stage produces is deliberately over-inclusive rather tha
 - bash
 - Python 3.7 or later
 - [OrthoFinder](https://github.com/davidemms/OrthoFinder) installed and on `PATH` (for the generation step only — the classification step only reads OrthoFinder's output files, it doesn't call OrthoFinder itself)
+- [MAFFT](https://mafft.cbrc.jp/alignment/software/) and [FastTree](http://www.microbesonline.org/fasttree/) on `PATH`, only for the optional branch-length step (`run_orthofinder.sh -b` / `bin/SpeciesTreeBranchLengths.py`). Install them explicitly: recent OrthoFinder versions do not necessarily pull them in.
 
 No third-party Python dependencies; everything here is standard library.
 
@@ -67,10 +68,10 @@ Close and reopen your terminal so the channel changes take effect, then:
 ```bash
 conda create -n orthofinder
 conda activate orthofinder
-conda install orthofinder
+conda install orthofinder mafft fasttree
 ```
 
-Confirm it's on `PATH`: `orthofinder -h`. See OrthoFinder's own [installation tutorial](https://davidemms.github.io/orthofinder_tutorials/alternative-ways-of-getting-OrthoFinder.html) for alternatives (Docker, source install) if conda isn't an option in your environment.
+Confirm they're on `PATH`: `orthofinder -h`, `mafft --version`, `FastTree -expert 2>&1 | head -1` (bioconda may install FastTree as `fasttree`; both names are accepted). See OrthoFinder's own [installation tutorial](https://davidemms.github.io/orthofinder_tutorials/alternative-ways-of-getting-OrthoFinder.html) for alternatives (Docker, source install) if conda isn't an option in your environment.
 
 ## Getting the pipeline
 
@@ -98,7 +99,7 @@ See `bash scripts/run_orthofinder.sh -h` for the full option list (`-m` for a sp
 
 #### Branch lengths for the rooted species tree (optional)
 
-Tools such as whole-genome aligners need a rooted species tree with branch lengths. A tree given with `-s` has a topology only, and OrthoFinder's own branch lengths depend on the tree method. `-b`/`--branch-lengths` adds maximum-likelihood branch lengths after the OrthoFinder run, keeping the topology and the root exactly as given: orthogroups with one gene per species are aligned with MAFFT, concatenated, and passed to `FastTree -nome -mllen -intree`; the FastTree output is re-rooted on the original root edge and its topology is checked against the input. Output: `Species_Tree/SpeciesTree_rooted_with_lengths.nwk` in the results directory. MAFFT and FastTree are OrthoFinder dependencies.
+Tools such as whole-genome aligners need a rooted species tree with branch lengths. A tree given with `-s` has a topology only, and OrthoFinder's own branch lengths depend on the tree method. `-b`/`--branch-lengths` adds maximum-likelihood branch lengths after the OrthoFinder run, keeping the topology and the root exactly as given: orthogroups with one gene per species are aligned with MAFFT, concatenated, and passed to `FastTree -nome -mllen -intree`; the FastTree output is re-rooted on the original root edge and its topology is checked against the input. Output: `Species_Tree/SpeciesTree_rooted_with_lengths.nwk` in the results directory. MAFFT and FastTree must be installed (see Requirements).
 
 For an existing OrthoFinder run, call the script directly:
 

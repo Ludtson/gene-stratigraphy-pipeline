@@ -155,9 +155,9 @@ command -v orthofinder >/dev/null 2>&1 || {
 }
 
 if [[ "$branch_lengths" == true ]]; then
-    for tool in mafft FastTree; do
-        command -v "$tool" >/dev/null 2>&1 || { log ERROR "$tool not found in PATH (needed for --branch-lengths)"; exit 1; }
-    done
+    command -v mafft >/dev/null 2>&1 || { log ERROR "mafft not found in PATH (needed for --branch-lengths)"; exit 1; }
+    command -v FastTree >/dev/null 2>&1 || command -v fasttree >/dev/null 2>&1 || {
+        log ERROR "FastTree (or fasttree) not found in PATH (needed for --branch-lengths)"; exit 1; }
 fi
 
 # Resolve absolute paths
