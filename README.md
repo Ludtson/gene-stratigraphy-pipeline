@@ -106,7 +106,7 @@ python bin/OrthoFinderDataProcessor.py output_dir \
   --prt_dir step2_output/protein
 ```
 
-**`--prt_dir` must point at `step2_output/protein` (the copy `run_orthofinder.sh` made), not Step 1's own output directory.** `--prt_dir` is where the *entire gene universe to classify* comes from — every gene in a species' protein FASTA gets classified, not just genes already in `Orthogroups.tsv` (absence from `Orthogroups.tsv` is how `species_specific_unclustered` genes are identified in the first place). Each species' protein FASTA is looked up by the exact species name OrthoFinder used internally (e.g. `C_cavernarum.faa`) directly under `--prt_dir` — no suffix handling, no species-map fallback for this lookup. `run_orthofinder.sh`'s `protein/` subdirectory always has that clean name already, because that's the same copy it fed to OrthoFinder (stripping Step 1's fixed `<species>_final.faa` naming convention when no map file is given — see `run_orthofinder.sh -h`). Step 1's raw output directory generally won't match, and a mismatch fails silently: a logged warning, and that species is skipped entirely rather than partially classified.
+**`--prt_dir` must point at `step2_output/protein` (the copy `run_orthofinder.sh` made), not Step 1's own output directory.** `--prt_dir` is where the *entire gene universe to classify* comes from — every gene in a species' protein FASTA gets classified, not just genes already in `Orthogroups.tsv` (absence from `Orthogroups.tsv` is how `species_specific_unclustered` genes are identified in the first place). Each species' protein FASTA is looked up by the exact species name OrthoFinder used internally (e.g. `SpeciesA.faa`) directly under `--prt_dir` — no suffix handling, no species-map fallback for this lookup. `run_orthofinder.sh`'s `protein/` subdirectory always has that clean name already, because that's the same copy it fed to OrthoFinder (stripping Step 1's fixed `<species>_final.faa` naming convention when no map file is given — see `run_orthofinder.sh -h`). Step 1's raw output directory generally won't match, and a mismatch fails silently: a logged warning, and that species is skipped entirely rather than partially classified.
 
 Key options:
 
@@ -145,11 +145,12 @@ If OrthoFinder's own `Statistics_PerSpecies.tsv` is available (`--stats-filename
 
 ## Verifying results independently
 
-`bin/CLSGClassificationVerifier.py` re-derives ground truth directly from a HOG table, from scratch — it does not reuse any other class in this pipeline, so a shared bug can't silently cancel out and hide a real error. It checks that every "clustered" candidate's HOG really is private to that species, and every "unclustered" candidate really is absent from the HOG table entirely — correctly treating a species with zero entries anywhere in the HOG table (structurally invisible to it, e.g. an outgroup) as not applicable, rather than flagging every one of that species' genes as a violation.
+`bin/CLSGClassificationVerifier.py` re-derives each gene's node from `Orthogroups.tsv` and the species tree, using the same MRCA rule as the classifier but re-parsing `Orthogroups.tsv` itself and sharing no classifier code, so a bug in the classification logic can't silently cancel out. Every gene listed in a `gene_IDs_by_node/<species>_<node>_gene_ids.txt` file must have that node as its re-derived node. A HOG table is optional (`--hog-tsv`): it adds a secondary consistency check whose findings are reported as notes and never affect the exit status, since a HOG table cannot see species outside the clade it covers.
 
 ```bash
 python bin/CLSGClassificationVerifier.py \
-  --hog-tsv path/to/N1.tsv \
+  --orthogroups-tsv path/to/Orthogroups.tsv \
+  --tree path/to/SpeciesTree_rooted_node_labels.txt \
   --results-dir output_dir \
   --report violations_report.tsv
 ```
@@ -179,7 +180,7 @@ output_dir/
 - `OrthogroupsStratigraphyClassifier.py` — the primary classifier: parses `Orthogroups.tsv`, derives each gene's node via MRCA
 - `OrthoFinderTreeParser.py` — parses the rooted species tree, walks ancestry, computes MRCA
 - `OrthologyCrossChecker.py` — the mandatory pairwise-Orthologues cross-check
-- `CLSGClassificationVerifier.py` — independent, from-scratch verification against a HOG table
+- `CLSGClassificationVerifier.py` — independent re-derivation of every gene's node from `Orthogroups.tsv` and the tree
 - `OrthoFinderStatsProcessor.py` — converts OrthoFinder's per-species stats to CSV
 - `CSVFileMerger.py` — merges the intermediate tables into the master table
 - `FastaGeneFilter.py` — extracts a gene-ID subset from a FASTA file

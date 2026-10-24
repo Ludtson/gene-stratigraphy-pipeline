@@ -3,46 +3,36 @@
 """
 CLSGClassificationVerifier.py
 
-Independently audits candidate lineage-specific gene (cLSG) classifications
-produced by OrthoFinderDataProcessor.py, by re-deriving ground truth
-directly from the OrthoFinder hierarchical orthogroup (HOG) table (e.g.
-N0.tsv, N1.tsv, ...), rather than trusting the pipeline's own internal
-bookkeeping. This exists because a real run (v7.1) produced "clustered"
-cLSGs that were later found to co-occur, in the same HOG, with genes from
-another species (L. cruciata) -- i.e. not actually species-specific.
+Independently audits the gene classifications produced by
+OrthoFinderDataProcessor.py. Ground truth is re-derived from the same inputs
+the classification uses -- OrthoFinder's Orthogroups.tsv and the rooted
+species tree -- rather than from the pipeline's own bookkeeping.
 
-This class does NOT reuse N0OrthoGeneSorter or any other pipeline code. It
-re-parses the HOG table from scratch, so a bug shared between this script
-and the pipeline cannot silently cancel out and hide a real error.
+Orthogroups.tsv is re-parsed here from scratch and the expected node of each
+gene is re-derived with the same MRCA rule as the classifier (species tree
+parsing is shared via SpeciesTree; no classifier code is reused), so a bug in
+the classification logic cannot cancel out and hide a real error.
 
-Two checks, run per species:
+Primary check, per species: every gene listed in a
+gene_IDs_by_node/<species>_<node>_gene_ids.txt file must belong to that node
+according to the re-derivation:
+  - absent from Orthogroups.tsv                 -> species_specific_unclustered
+  - orthogroup contains this species only       -> species_specific_clustered
+  - otherwise MRCA of this species and every other species in its orthogroup
 
-1. Clustered cLSGs (genes the pipeline assigned to a HOG it believes is
-   private to one species): for every such gene, independently look up its
-   HOG in the HOG table and confirm that HOG contains genes from that
-   species ONLY -- no other species column has any entry in that row.
-
-2. Unclustered cLSGs (genes the pipeline believes are entirely absent from
-   the HOG table -- present in the species' protein FASTA but in no HOG at
-   all): for every such gene, confirm it truly does not appear in ANY HOG
-   row for that species, anywhere in the HOG table.
-
-Note: this checks internal consistency between the pipeline's output and
-the HOG table it was built from. It cannot detect relationships that are
-structurally invisible to the HOG table itself -- e.g. a species outside
-the clade covered by whichever N?.tsv was used (see
-OrthoFinderDataProcessor's --hog-filename). That case is what the
-mandatory Orthogroups.tsv / pairwise Orthologues cross-check in the main
-pipeline is for, not this script.
+Optional secondary check (--hog-tsv): the old HOG-table consistency checks
+(a "clustered" gene's HOG is private to the species; an "unclustered" gene is
+in no HOG). A HOG table cannot see species outside the clade it covers, so
+these findings are reported as notes and never affect the exit status.
 
 Expected input layout (matches OrthoFinderDataProcessor.py's output):
-  <results_dir>/<species>/gene_IDs_by_node/<species>_species_specific_clustered_gene_ids.txt
-  <results_dir>/<species>/gene_IDs_by_node/<species>_species_specific_unclustered_gene_ids.txt
+  <results_dir>/<species>/gene_IDs_by_node/<species>_<node>_gene_ids.txt
 
 Usage:
   python CLSGClassificationVerifier.py \
-    --hog-tsv N1.tsv \
-    --results-dir clsg_v7.1 \
+    --orthogroups-tsv Orthogroups.tsv \
+    --tree SpeciesTree_rooted_node_labels.txt \
+    --results-dir results \
     --report violations_report.tsv
 
 Exit status: 0 if no violations found, 1 if any violation is found (or if
@@ -50,13 +40,15 @@ no species could be checked at all), so this can be used as a CI/pipeline
 gate, not just a manual report.
 
 Author: Adekola Owoyemi (Casola Lab, Texas A&M University)
-Version: 1.0.0
+Version: 2.0.0
 """
 
 import argparse
 import csv
 import sys
 from pathlib import Path
+
+from OrthoFinderTreeParser import SpeciesTree
 
 # Increase field size limit for large bioinformatics files (HOG rows can have
 # very long comma-separated gene lists). sys.maxsize overflows the C `long`
@@ -65,15 +57,27 @@ from pathlib import Path
 # that's safe everywhere.
 csv.field_size_limit(min(sys.maxsize, 2**31 - 1))
 
-__version__ = "1.0.0"
+__version__ = "2.0.0"
 __author__ = "Adekola Owoyemi (Casola Lab, Texas A&M University)"
 
 
 class CLSGClassificationVerifier:
-    def __init__(self, hog_tsv_path, results_dir, species_filter=None):
+    def __init__(self, hog_tsv_path, results_dir, species_filter=None,
+                 orthogroups_tsv_path=None, tree_path=None):
+        # hog_tsv_path is optional (secondary check). OrthoFinderDataProcessor
+        # also uses this class purely as a HOG-table parser.
         self.hog_tsv_path = hog_tsv_path
+        self.orthogroups_tsv_path = orthogroups_tsv_path
+        self.tree_path = tree_path
         self.results_dir = Path(results_dir)
         self.species_filter = set(species_filter) if species_filter else None
+
+        # {(species, gene_id): og_id}, {og_id: {species: set(genes)}}
+        self.og_gene_to_og = {}
+        self.og_species_genes = {}
+        self.species_in_og_table = []
+        self.tree = None
+        self.notes = []  # secondary HOG findings; never affect exit status
 
         # {hog_id: {species: set(genes)}}
         self.hog_species_genes = {}
@@ -89,8 +93,7 @@ class CLSGClassificationVerifier:
         self.species_with_hog_data = set()
 
         self.violations = []
-        self.total_clustered_checked = 0
-        self.total_unclustered_checked = 0
+        self.total_genes_checked = 0
         self.skipped_species = []
 
     def parse_hog_table(self):
@@ -150,6 +153,39 @@ class CLSGClassificationVerifier:
             for sp, genes in species_genes.items() if genes
         }
 
+    def parse_orthogroups(self):
+        """Parses Orthogroups.tsv from scratch (independent of the classifier)."""
+        with open(self.orthogroups_tsv_path, "r", newline="", encoding="utf-8") as fh:
+            reader = csv.reader(fh, delimiter="\t")
+            header = next(reader, None)
+            if not header or len(header) < 2:
+                raise ValueError(f"Orthogroups table {self.orthogroups_tsv_path} is empty or has no species columns.")
+            self.species_in_og_table = header[1:]
+            for row in reader:
+                if not row or not row[0].strip():
+                    continue
+                og_id = row[0].strip()
+                species_genes = {}
+                for i, species in enumerate(self.species_in_og_table):
+                    if i + 1 >= len(row):
+                        continue
+                    genes = [g.strip() for g in row[i + 1].split(",") if g.strip()]
+                    if genes:
+                        species_genes[species] = set(genes)
+                        for gene_id in genes:
+                            self.og_gene_to_og.setdefault((species, gene_id), og_id)
+                self.og_species_genes[og_id] = species_genes
+
+    def expected_node(self, species, gene_id):
+        """Node the gene should be in, re-derived from Orthogroups.tsv + tree. Raises ValueError if unplaceable."""
+        og_id = self.og_gene_to_og.get((species, gene_id))
+        if og_id is None:
+            return "species_specific_unclustered"
+        others = sorted(sp for sp, genes in self.og_species_genes[og_id].items() if sp != species and genes)
+        if not others:
+            return "species_specific_clustered"
+        return self.tree.get_mrca([species] + others)
+
     @staticmethod
     def _load_gene_id_list(path):
         """Loads a newline-delimited gene ID file. Returns an empty set if the file doesn't exist."""
@@ -184,83 +220,79 @@ class CLSGClassificationVerifier:
 
         return species_dirs
 
-    def _audit_clustered(self, species, species_dir):
+    def _audit_nodes(self, species, species_dir):
         """
-        Check 1: every gene the pipeline classified as a clustered cLSG must
-        belong to a HOG that, independently, contains genes from this
-        species only.
+        Primary check: every gene in each <species>_<node>_gene_ids.txt must
+        have that node as its re-derived expected node. Returns genes checked.
         """
-        gene_file = species_dir / "gene_IDs_by_node" / f"{species}_species_specific_clustered_gene_ids.txt"
-        claimed_genes = self._load_gene_id_list(gene_file)
-
+        prefix, suffix = f"{species}_", "_gene_ids.txt"
         checked = 0
-        for gene_id in claimed_genes:
-            checked += 1
-            hog_id = self.gene_to_hog.get((species, gene_id))
-
-            if hog_id is None:
-                if species not in self.species_with_hog_data:
-                    # The whole species has zero entries anywhere in this
-                    # HOG file (e.g. an outgroup this HOG table is
-                    # structurally blind to) -- expected and explained, not
-                    # a violation. Every gene of this species would trigger
-                    # this same "missing" case, which is exactly why it's
-                    # not informative to flag individually.
+        for path in sorted((species_dir / "gene_IDs_by_node").glob(f"{prefix}*{suffix}")):
+            claimed_node = path.name[len(prefix):-len(suffix)]
+            if claimed_node == "candidate_lsg":
+                continue  # cross-checked subset of the species-specific buckets, not a node
+            for gene_id in sorted(self._load_gene_id_list(path)):
+                checked += 1
+                try:
+                    expected = self.expected_node(species, gene_id)
+                except ValueError as e:
+                    self.violations.append({
+                        "species": species, "gene_id": gene_id, "claimed_node": claimed_node,
+                        "expected_node": "", "issue": "node_not_derivable", "detail": str(e),
+                    })
                     continue
-                self.violations.append({
-                    "species": species,
-                    "gene_id": gene_id,
-                    "hog_id": "NOT_FOUND",
-                    "issue": "clustered_cLSG_gene_missing_from_hog_table",
-                    "other_species_in_hog": "",
-                })
-                continue
-
-            species_genes = self.hog_species_genes.get(hog_id, {})
-            other_species_present = sorted(
-                sp for sp, genes in species_genes.items() if sp != species and genes
-            )
-            if other_species_present:
-                self.violations.append({
-                    "species": species,
-                    "gene_id": gene_id,
-                    "hog_id": hog_id,
-                    "issue": "clustered_cLSG_HOG_shared_with_other_species",
-                    "other_species_in_hog": ";".join(other_species_present),
-                })
-
+                if expected != claimed_node:
+                    self.violations.append({
+                        "species": species, "gene_id": gene_id, "claimed_node": claimed_node,
+                        "expected_node": expected, "issue": "node_mismatch",
+                        "detail": self.og_gene_to_og.get((species, gene_id), "no_orthogroup"),
+                    })
         return checked
 
-    def _audit_unclustered(self, species, species_dir):
+    def _hog_notes(self, species, species_dir):
         """
-        Check 2: every gene the pipeline classified as unclustered (absent
-        from the HOG table entirely) must genuinely not appear in ANY HOG
-        row, for this species, anywhere in the HOG table.
+        Secondary, informational: HOG-table consistency of the two
+        species-specific buckets. Findings go to self.notes only.
         """
-        gene_file = species_dir / "gene_IDs_by_node" / f"{species}_species_specific_unclustered_gene_ids.txt"
-        claimed_genes = self._load_gene_id_list(gene_file)
-
-        checked = 0
-        for gene_id in claimed_genes:
-            checked += 1
+        gdir = species_dir / "gene_IDs_by_node"
+        clustered = self._load_gene_id_list(gdir / f"{species}_species_specific_clustered_gene_ids.txt")
+        unclustered = self._load_gene_id_list(gdir / f"{species}_species_specific_unclustered_gene_ids.txt")
+        if species not in self.species_with_hog_data:
+            return  # species invisible to this HOG table; nothing comparable
+        for gene_id in sorted(clustered):
+            hog_id = self.gene_to_hog.get((species, gene_id))
+            if hog_id is None:
+                self.notes.append({"species": species, "gene_id": gene_id, "claimed_node": "species_specific_clustered",
+                                   "expected_node": "", "issue": "hog_note_clustered_gene_missing_from_hog_table",
+                                   "detail": ""})
+                continue
+            others = sorted(sp for sp, g in self.hog_species_genes.get(hog_id, {}).items() if sp != species and g)
+            if others:
+                self.notes.append({"species": species, "gene_id": gene_id, "claimed_node": "species_specific_clustered",
+                                   "expected_node": "", "issue": "hog_note_clustered_hog_shared_with_other_species",
+                                   "detail": f"{hog_id}:{';'.join(others)}"})
+        for gene_id in sorted(unclustered):
             hog_id = self.gene_to_hog.get((species, gene_id))
             if hog_id is not None:
-                self.violations.append({
-                    "species": species,
-                    "gene_id": gene_id,
-                    "hog_id": hog_id,
-                    "issue": "unclustered_cLSG_actually_present_in_a_HOG",
-                    "other_species_in_hog": "",
-                })
-
-        return checked
+                self.notes.append({"species": species, "gene_id": gene_id, "claimed_node": "species_specific_unclustered",
+                                   "expected_node": "", "issue": "hog_note_unclustered_gene_present_in_a_hog",
+                                   "detail": hog_id})
 
     def run(self):
-        """Parses the HOG table and audits every discovered (or requested) species."""
-        print(f"[INFO] Parsing HOG table: {self.hog_tsv_path}")
-        self.parse_hog_table()
-        print(f"[INFO] Loaded {len(self.hog_species_genes)} HOGs across "
-              f"{len(self.species_in_hog_table)} species columns.")
+        """Re-derives expected nodes and audits every discovered (or requested) species."""
+        if not self.orthogroups_tsv_path or not self.tree_path:
+            raise ValueError("Both an Orthogroups.tsv and a species tree are required for verification.")
+        print(f"[INFO] Parsing Orthogroups table: {self.orthogroups_tsv_path}")
+        self.parse_orthogroups()
+        self.tree = SpeciesTree(file_path=self.tree_path)
+        not_in_tree = sorted(set(self.species_in_og_table) - self.tree.get_all_species())
+        if not_in_tree:
+            raise ValueError(f"Species in Orthogroups table but not leaves of the tree: {', '.join(not_in_tree)}")
+        print(f"[INFO] Loaded {len(self.og_species_genes)} orthogroups across "
+              f"{len(self.species_in_og_table)} species.")
+        if self.hog_tsv_path:
+            self.parse_hog_table()
+            print(f"[INFO] Loaded {len(self.hog_species_genes)} HOGs (secondary, informational).")
 
         species_dirs = self._find_species_dirs()
         if not species_dirs:
@@ -270,32 +302,36 @@ class CLSGClassificationVerifier:
         print()
 
         for species, species_dir in sorted(species_dirs.items()):
-            if species not in self.species_in_hog_table:
-                print(f"  [WARNING] '{species}' is not a column in the HOG table -- skipping (name mismatch?).")
+            if species not in self.species_in_og_table:
+                print(f"  [WARNING] '{species}' is not a column in Orthogroups.tsv -- skipping (name mismatch?).")
                 self.skipped_species.append(species)
                 continue
-            n_clustered = self._audit_clustered(species, species_dir)
-            n_unclustered = self._audit_unclustered(species, species_dir)
-            self.total_clustered_checked += n_clustered
-            self.total_unclustered_checked += n_unclustered
-            print(f"  {species}: checked {n_clustered} clustered cLSGs, {n_unclustered} unclustered cLSGs")
+            n_checked = self._audit_nodes(species, species_dir)
+            self.total_genes_checked += n_checked
+            if self.hog_tsv_path:
+                self._hog_notes(species, species_dir)
+            print(f"  {species}: checked {n_checked} genes")
 
     def write_report(self, report_path):
-        """Writes the violations report (TSV). Always written, even if empty."""
+        """Writes the report (TSV). Violations first, then HOG notes. Always written, even if empty."""
         with open(report_path, "w", newline="") as fh:
             writer = csv.DictWriter(
-                fh, fieldnames=["species", "gene_id", "hog_id", "issue", "other_species_in_hog"]
+                fh, delimiter="\t", lineterminator="\n",
+                fieldnames=["level", "species", "gene_id", "claimed_node", "expected_node", "issue", "detail"],
             )
             writer.writeheader()
-            writer.writerows(self.violations)
+            for level, rows in (("violation", self.violations), ("note", self.notes)):
+                for r in rows:
+                    writer.writerow({"level": level, **r})
 
     def print_summary(self, report_path):
         print()
-        print(f"[INFO] Total clustered cLSGs checked:   {self.total_clustered_checked}")
-        print(f"[INFO] Total unclustered cLSGs checked: {self.total_unclustered_checked}")
+        print(f"[INFO] Total genes checked: {self.total_genes_checked}")
         if self.skipped_species:
-            print(f"[WARNING] Species skipped (name mismatch with HOG table): {', '.join(self.skipped_species)}")
+            print(f"[WARNING] Species skipped (name mismatch with Orthogroups.tsv): {', '.join(self.skipped_species)}")
         print(f"[INFO] Violations found: {len(self.violations)}")
+        if self.hog_tsv_path:
+            print(f"[INFO] Secondary HOG notes (informational): {len(self.notes)}")
         print(f"[INFO] Report written to: {report_path}")
         print()
 
@@ -306,21 +342,30 @@ class CLSGClassificationVerifier:
             for issue, count in sorted(by_issue.items()):
                 print(f"  {issue}: {count}")
             print()
-            print("[FAIL] cLSG classification does NOT match the HOG table. See report for details.")
+            print("[FAIL] Classification does NOT match the Orthogroups.tsv + tree re-derivation. See report for details.")
         else:
-            print("[PASS] All checked cLSGs are consistent with the HOG table.")
+            print("[PASS] All checked genes match the Orthogroups.tsv + tree re-derivation.")
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Independently verify candidate lineage-specific gene (cLSG) "
-                     "classifications against the raw OrthoFinder HOG table.",
+        description="Independently verify gene classifications by re-deriving each gene's node "
+                     "from Orthogroups.tsv and the species tree.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
     parser.add_argument(
-        "--hog-tsv", required=True,
-        help="Path to the HOG table actually used for classification (e.g. N0.tsv or N1.tsv -- "
-             "must match whatever --hog-filename the main pipeline was run with).",
+        "--orthogroups-tsv", required=True,
+        help="Path to OrthoFinder's Orthogroups.tsv (the file the classification was run with).",
+    )
+    parser.add_argument(
+        "--tree", required=True,
+        help="Path to the rooted species tree with labelled internal nodes "
+             "(SpeciesTree_rooted_node_labels.txt).",
+    )
+    parser.add_argument(
+        "--hog-tsv", default=None,
+        help="Optional: a HOG table (e.g. N1.tsv) for a secondary, informational consistency check. "
+             "Its findings are reported as notes and never change the exit status.",
     )
     parser.add_argument(
         "--results-dir", required=True,
@@ -334,15 +379,18 @@ def main():
     )
     parser.add_argument(
         "--report", default="clsg_verification_report.tsv",
-        help="Path to write the violations report (TSV). Always written, even if empty.",
+        help="Path to write the report (TSV). Always written, even if empty.",
     )
     args = parser.parse_args()
 
-    verifier = CLSGClassificationVerifier(args.hog_tsv, args.results_dir, species_filter=args.species)
+    verifier = CLSGClassificationVerifier(
+        args.hog_tsv, args.results_dir, species_filter=args.species,
+        orthogroups_tsv_path=args.orthogroups_tsv, tree_path=args.tree,
+    )
 
     try:
         verifier.run()
-    except (ValueError, FileNotFoundError) as e:
+    except (ValueError, FileNotFoundError, OSError) as e:
         print(f"[ERROR] {e}")
         sys.exit(1)
 

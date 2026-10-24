@@ -37,6 +37,8 @@ jobs:
       - name: Independently verify cLSG classification
         run: |
           python bin/CLSGClassificationVerifier.py \
+            --orthogroups-tsv example_data/orthofinder/Orthogroups/Orthogroups.tsv \
+            --tree example_data/orthofinder/Species_Tree/SpeciesTree_rooted_node_labels.txt \
             --hog-tsv example_data/orthofinder/Phylogenetic_Hierarchical_Orthogroups/N1.tsv \
             --results-dir test_output \
             --report verification_report.tsv
