@@ -94,7 +94,24 @@ bash scripts/run_orthofinder.sh \
   -t 16
 ```
 
-See `bash scripts/run_orthofinder.sh -h` for the full option list (`-m` for a species map file, `-s` for a rooted species tree).
+See `bash scripts/run_orthofinder.sh -h` for the full option list (`-m` for a species map file, `-s` for a rooted species tree, `-b` for branch lengths).
+
+#### Branch lengths for the rooted species tree (optional)
+
+Tools such as whole-genome aligners need a rooted species tree with branch lengths. A tree given with `-s` has a topology only, and OrthoFinder's own branch lengths depend on the tree method. `-b`/`--branch-lengths` adds maximum-likelihood branch lengths after the OrthoFinder run, keeping the topology and the root exactly as given: orthogroups with one gene per species are aligned with MAFFT, concatenated, and passed to `FastTree -nome -mllen -intree`; the FastTree output is re-rooted on the original root edge and its topology is checked against the input. Output: `Species_Tree/SpeciesTree_rooted_with_lengths.nwk` in the results directory. MAFFT and FastTree are OrthoFinder dependencies.
+
+For an existing OrthoFinder run, call the script directly:
+
+```bash
+python bin/SpeciesTreeBranchLengths.py \
+  --orthogroups step2_output/orthofinder/Results_*/Orthogroups/Orthogroups.tsv \
+  --protein-dir step2_output/protein \
+  --tree path/to/rooted_tree.nwk \
+  --out SpeciesTree_rooted_with_lengths.nwk \
+  --threads 16
+```
+
+If too few strictly single-copy orthogroups exist (e.g. many polyploids), `--min-species-frac 0.8` also accepts orthogroups missing up to 20% of species (filled with gaps). `--max-orthogroups` (default 1000) caps the run time.
 
 ### 2. Classification: `bin/OrthoFinderDataProcessor.py`
 
@@ -184,6 +201,7 @@ output_dir/
 - `OrthoFinderStatsProcessor.py` — converts OrthoFinder's per-species stats to CSV
 - `CSVFileMerger.py` — merges the intermediate tables into the master table
 - `FastaGeneFilter.py` — extracts a gene-ID subset from a FASTA file
+- `SpeciesTreeBranchLengths.py` — adds ML branch lengths to a fixed rooted species tree (used by `run_orthofinder.sh -b`)
 
 ## Contributing
 

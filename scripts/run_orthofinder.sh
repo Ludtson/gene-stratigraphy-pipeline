@@ -23,6 +23,7 @@ set -euo pipefail
 # 4. Symlink FASTA files for OrthoFinder execution
 # 5. Run OrthoFinder (DIAMOND-based)
 # 6. Move results into structured output directory
+# 7. Optionally (-b) add ML branch lengths to the rooted species tree
 #
 # Outputs:
 #   output_dir/
@@ -39,7 +40,7 @@ set -euo pipefail
 #   a rooted species tree built from clean species names.
 #
 # Usage:
-#   bash run_orthofinder.sh -i <input_dir> -o <output_dir> [-t threads] [-m map_file]
+#   bash run_orthofinder.sh -i <input_dir> -o <output_dir> [-t threads] [-m map_file] [-s tree] [-b]
 #
 # Example:
 #   bash run_orthofinder.sh -i step1_output -o step2_output -t 16
@@ -53,6 +54,9 @@ threads=8
 map_file=""
 log_file="orthofinder.log"
 species_tree=""
+branch_lengths=false
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PY="${PYTHON:-python3}"
 
 
 # ==============================================================================
@@ -75,10 +79,11 @@ while [[ "$#" -gt 0 ]]; do
         -t|--threads) threads="$2"; shift ;;
         -m|--map) map_file="$2"; shift ;;
         -s|--species-tree) species_tree="$2"; shift ;;
+        -b|--branch-lengths) branch_lengths=true ;;
         -h|--help)
             echo "
 Usage:
-  $0 -i <input_dir> -o <output_dir> [-t threads] [-m map_file]
+  $0 -i <input_dir> -o <output_dir> [-t threads] [-m map_file] [-s tree] [-b]
 
 Description:
   Run OrthoFinder on a set of protein FASTA files.
@@ -91,6 +96,10 @@ Optional:
   -t, --threads   Number of threads (default: 8)
   -m, --map       Tab-separated file for renaming species
   -s, --species-tree  Rooted Newick species tree file
+  -b, --branch-lengths  After OrthoFinder, add ML branch lengths to the rooted species
+                      tree (topology and root kept; MAFFT + FastTree on single-copy
+                      orthogroups). Writes Species_Tree/SpeciesTree_rooted_with_lengths.nwk
+                      in the results directory. See bin/SpeciesTreeBranchLengths.py.
 
 Map file format (optional):
   Species    Basename
@@ -144,6 +153,12 @@ command -v orthofinder >/dev/null 2>&1 || {
     log ERROR "orthofinder not found in PATH"
     exit 1
 }
+
+if [[ "$branch_lengths" == true ]]; then
+    for tool in mafft FastTree; do
+        command -v "$tool" >/dev/null 2>&1 || { log ERROR "$tool not found in PATH (needed for --branch-lengths)"; exit 1; }
+    done
+fi
 
 # Resolve absolute paths
 input_dir=$(realpath "$input_dir")
@@ -274,6 +289,21 @@ if [[ -d "$temp_dir/OrthoFinder" ]]; then
 else
     log ERROR "OrthoFinder output not found"
     exit 1
+fi
+
+
+# ==============================================================================
+# BRANCH LENGTHS (optional)
+# ==============================================================================
+if [[ "$branch_lengths" == true ]]; then
+    results_dir=$(ls -td "$output_dir"/orthofinder/Results_*/ 2>/dev/null | head -n 1)
+    results_dir="${results_dir%/}"
+    [[ -n "$results_dir" ]] || { log ERROR "No Results_* directory in $output_dir/orthofinder"; exit 1; }
+    tree_in="${species_tree:-$results_dir/Species_Tree/SpeciesTree_rooted.txt}"
+    tree_out="$results_dir/Species_Tree/SpeciesTree_rooted_with_lengths.nwk"
+    log INFO "Adding branch lengths to $tree_in"
+    "$PY" "$SCRIPT_DIR/../bin/SpeciesTreeBranchLengths.py"         --orthogroups "$results_dir/Orthogroups/Orthogroups.tsv"         --protein-dir "$output_dir/protein"         --tree "$tree_in"         --out "$tree_out"         --threads "$threads" >> "$log_file" 2>&1 || { log ERROR "Branch-length estimation failed; see $log_file"; exit 1; }
+    log INFO "Rooted tree with branch lengths: $tree_out"
 fi
 
 
