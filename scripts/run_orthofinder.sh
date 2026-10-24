@@ -254,12 +254,12 @@ log INFO "Running OrthoFinder with $threads threads..."
 if [[ -n "$species_tree" ]]; then
     log INFO "Using provided species tree: $species_tree"
     
-    orthofinder -f "$temp_dir" -t "$threads" -S diamond -s "$species_tree" \
+    orthofinder -f "$temp_dir" -t "$threads" -a "$threads" -S diamond -s "$species_tree" \
     >> "$log_file" 2>&1
 else
     log INFO "No species tree provided — inferring tree"
     
-    orthofinder -f "$temp_dir" -t "$threads" -S diamond \
+    orthofinder -f "$temp_dir" -t "$threads" -a "$threads" -S diamond \
     >> "$log_file" 2>&1
 fi
 

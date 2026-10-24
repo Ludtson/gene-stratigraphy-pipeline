@@ -162,7 +162,7 @@ class CSVFileMerger:
                 final_fieldnames.insert(0, self.primary_merge_key)
                 
             with open(self.output_file, 'w', newline='') as f:
-                writer = csv.DictWriter(f, fieldnames=final_fieldnames) 
+                writer = csv.DictWriter(f, fieldnames=final_fieldnames, lineterminator='\n') 
                 writer.writeheader()
                 
                 for key, row in merged_data.items():

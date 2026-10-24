@@ -177,7 +177,7 @@ class OrthologyCrossChecker:
         sorted_exclusions = sorted(self.exclusions, key=lambda e: (e["species"], e["gene_id"]))
         with open(path, "w", newline="") as fh:
             writer = csv.DictWriter(
-                fh,
+                fh, delimiter="\t", lineterminator="\n",
                 fieldnames=[
                     "species", "gene_id", "original_status", "check",
                     "conflicting_species", "conflicting_gene",

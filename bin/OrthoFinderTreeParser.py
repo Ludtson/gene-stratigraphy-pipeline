@@ -442,7 +442,7 @@ def main():
     if args.output:
         try:
             with open(args.output, 'w', newline='') as f:
-                writer = csv.writer(f, delimiter='\t')
+                writer = csv.writer(f, delimiter='\t', lineterminator='\n')
                 writer.writerow(header)
                 for node_id, species_list in species_map.items():
                     writer.writerow([node_id, ', '.join(species_list)])

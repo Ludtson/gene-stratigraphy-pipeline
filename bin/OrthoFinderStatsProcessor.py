@@ -108,7 +108,7 @@ class OrthoFinderStatsProcessor:
             headers = ['Species'] + list(self.MAPPINGS.keys())
             
             with open(self.csv_file, 'w', newline='') as csv_f:
-                writer = csv.DictWriter(csv_f, fieldnames=headers)
+                writer = csv.DictWriter(csv_f, fieldnames=headers, lineterminator='\n')
                 writer.writeheader()
                 
                 for basename in species_basenames:

@@ -353,7 +353,7 @@ class OrthoFinderDataProcessor:
         header = ['Node', 'Number_of_Genes']
         try:
             with open(summary_file, 'w', newline='') as f:
-                writer = csv.writer(f)
+                writer = csv.writer(f, lineterminator='\n')
                 writer.writerow(header)
                 writer.writerows(summary_data)
             logging.info(f"Per-species summary written to {summary_file.name}")
@@ -373,7 +373,7 @@ class OrthoFinderDataProcessor:
         summary_file = self.intermediate_dir / "global_gene_counts_per_node.tsv"
         try:
             with open(summary_file, 'w', newline='') as f:
-                writer = csv.writer(f, delimiter='\t')
+                writer = csv.writer(f, delimiter='\t', lineterminator='\n')
                 writer.writerow(header)
                 for species_name, node_data in sorted(global_summary_data.items()):
                     row = [species_name] + [node_data.get(node, 'NA') for node in all_nodes]
@@ -620,7 +620,7 @@ class OrthoFinderDataProcessor:
         sorted_rows = sorted(self.hog_disagreements, key=lambda r: (r["species"], r["gene_id"]))
         with open(path, "w", newline="") as f:
             writer = csv.DictWriter(
-                f, fieldnames=["species", "gene_id", "orthogroups_level", "hog_level", "reason", "missing_species"]
+                f, delimiter="\t", lineterminator="\n", fieldnames=["species", "gene_id", "orthogroups_level", "hog_level", "reason", "missing_species"]
             )
             writer.writeheader()
             writer.writerows(sorted_rows)
@@ -629,7 +629,7 @@ class OrthoFinderDataProcessor:
         """Writes the stats cross-validation mismatch log (TSV). Always written, even if empty."""
         with open(path, "w", newline="") as f:
             writer = csv.DictWriter(
-                f, fieldnames=["species", "our_clustered", "orthofinder_clustered", "our_unclustered", "orthofinder_unclustered"]
+                f, delimiter="\t", lineterminator="\n", fieldnames=["species", "our_clustered", "orthofinder_clustered", "our_unclustered", "orthofinder_unclustered"]
             )
             writer.writeheader()
             writer.writerows(sorted(self.stats_mismatches, key=lambda r: r["species"]))
@@ -838,7 +838,7 @@ class OrthoFinderDataProcessor:
             # to be processed in, not sorted.
             sorted_rows = sorted(all_species_classifications, key=lambda row: (row[0], row[1]))
             with open(summary_file, 'w', newline='') as f:
-                writer = csv.writer(f, delimiter='\t')
+                writer = csv.writer(f, delimiter='\t', lineterminator='\n')
                 writer.writerow(header)
                 writer.writerows(sorted_rows)
             logging.info(f"Successfully wrote detailed gene summary to {summary_file}")
@@ -867,7 +867,7 @@ class OrthoFinderDataProcessor:
             'verified_candidate_percentage',
         ]
         with open(smry_file, 'w', newline='') as f:
-            writer = csv.writer(f)
+            writer = csv.writer(f, lineterminator='\n')
             writer.writerow(header)
             for species_filename in sorted(gene_stats):
                 raw_pct, total_candidate_pct, verified_pct = gene_stats[species_filename]

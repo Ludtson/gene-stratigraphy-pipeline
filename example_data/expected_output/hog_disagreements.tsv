@@ -1,2 +1,2 @@
-species,gene_id,orthogroups_level,hog_level,reason,missing_species
-SpeciesA,gene_a2,N0,species_specific_clustered,missing_species_from_hog,Outgroup
+species	gene_id	orthogroups_level	hog_level	reason	missing_species
+SpeciesA	gene_a2	N0	species_specific_clustered	missing_species_from_hog	Outgroup

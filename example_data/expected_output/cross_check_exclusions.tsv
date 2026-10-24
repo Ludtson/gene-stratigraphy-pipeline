@@ -1,2 +1,2 @@
-species,gene_id,original_status,check,conflicting_species,conflicting_gene
-SpeciesA,gene_a3,species_specific_unclustered,pairwise_orthologues,Outgroup,gene_o2
+species	gene_id	original_status	check	conflicting_species	conflicting_gene
+SpeciesA	gene_a3	species_specific_unclustered	pairwise_orthologues	Outgroup	gene_o2
