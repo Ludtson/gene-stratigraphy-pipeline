@@ -5,6 +5,7 @@ import re
 import argparse
 import logging
 import csv
+import sys
 from collections import defaultdict
 from pathlib import Path
 
@@ -21,6 +22,10 @@ from FastaGeneFilter import GeneSequenceExtractor
 from CSVFileMerger import CSVFileMerger
 from OrthologyCrossChecker import OrthologyCrossChecker
 
+class PipelineInputError(Exception):
+    """Invalid or inconsistent input; the run cannot produce trustworthy output."""
+
+
 class OrthoFinderDataProcessor:
     def __init__(self, out_dir, orthofinder_dir=None, prt_dir=None,
                 stats_filename="Statistics_PerSpecies.tsv",
@@ -30,7 +35,8 @@ class OrthoFinderDataProcessor:
                 orthologues_dirname="Orthologues",
                 skip_cross_check=False,
                 skip_hog_validation=False,
-                species_map_file=None):
+                species_map_file=None,
+                allow_missing=False):
         self.out_dir = Path(out_dir)
         # Create the output directory immediately, before setting up logging.
         self.out_dir.mkdir(parents=True, exist_ok=True)
@@ -63,6 +69,11 @@ class OrthoFinderDataProcessor:
         # tables are no longer the primary classification source), so a
         # missing HOG file just means validation is skipped, not an error.
         self.skip_hog_validation = skip_hog_validation
+        # Species whose protein FASTA is missing/unreadable are always reported
+        # and make the run exit non-zero, unless allow_missing is set.
+        self.allow_missing = allow_missing
+        self.skipped_species = {}   # species basename -> reason
+        self.write_failures = []    # (path, error)
         self.species_map = self._load_species_map()
         self.setup_logging()
         self.stats_processor = None
@@ -201,6 +212,13 @@ class OrthoFinderDataProcessor:
             # primary classification depends on entirely.
             tree_file = self._find_file(self.orthofinder_dir, self.tree_filename)
             self.tree_parser = SpeciesTree(file_path=tree_file, species_map_file=self.species_map_file)
+            n_unlabelled = self.tree_parser.count_unlabelled_internal_nodes()
+            if n_unlabelled:
+                raise PipelineInputError(
+                    f"{n_unlabelled} internal node(s) in {tree_file} have no label. Every internal "
+                    f"node must be labelled (N0, N1, ...); use OrthoFinder's "
+                    f"SpeciesTree_rooted_node_labels.txt."
+                )
 
             # Orthogroups.tsv: required. This is the primary classification
             # source -- see OrthogroupsStratigraphyClassifier's module
@@ -209,6 +227,14 @@ class OrthoFinderDataProcessor:
             orthogroups_file = self._find_file(self.orthofinder_dir, self.orthogroups_filename)
             self.stratigraphy_classifier = OrthogroupsStratigraphyClassifier(orthogroups_file, self.tree_parser)
             self.stratigraphy_classifier.parse()
+            tree_leaves = self.tree_parser.get_all_species()
+            not_in_tree = sorted(set(self.stratigraphy_classifier.species_in_og_table) - tree_leaves)
+            if not_in_tree:
+                raise PipelineInputError(
+                    f"{len(not_in_tree)} species in {orthogroups_file} are not leaves of the species "
+                    f"tree {tree_file}: {', '.join(not_in_tree)}. Tree leaves: "
+                    f"{', '.join(sorted(tree_leaves))}."
+                )
             logging.info(f"Parsed {len(self.stratigraphy_classifier.og_species_genes)} orthogroups from {orthogroups_file}")
 
             self._initialize_hog_verifier()
@@ -295,7 +321,9 @@ class OrthoFinderDataProcessor:
         self.cross_checker = OrthologyCrossChecker(orthologues_dir=orthologues_dir)
 
     def _get_all_gene_ids_from_fasta(self, species_basename):
-        if not self.prt_dir: return set()
+        if not self.prt_dir:
+            self.skipped_species[species_basename] = "no --prt_dir given"
+            return set()
         fasta_file = Path(self.prt_dir) / f"{species_basename}.prt"
         if not fasta_file.is_file():
             for ext in ['.fa', '.fasta', '.faa', '.fna']:
@@ -303,6 +331,7 @@ class OrthoFinderDataProcessor:
                 if fasta_file.is_file(): break
             else:
                 logging.warning(f"Protein FASTA file not found for {species_basename}, cannot classify this species.")
+                self.skipped_species[species_basename] = f"protein FASTA not found in {self.prt_dir}"
                 return set()
         all_gene_ids = set()
         try:
@@ -314,7 +343,9 @@ class OrthoFinderDataProcessor:
             logging.info(f"Extracted {len(all_gene_ids)} total gene IDs from {fasta_file.name}.")
             return all_gene_ids
         except Exception as e:
-            logging.error(f"Could not read FASTA file {fasta_file}: {e}"); return set()
+            logging.error(f"Could not read FASTA file {fasta_file}: {e}")
+            self.skipped_species[species_basename] = f"could not read {fasta_file}: {e}"
+            return set()
 
     def _write_per_species_summary(self, species_out_dir, filename_csn, summary_data):
         """Writes the summary CSV for a single species."""
@@ -328,6 +359,7 @@ class OrthoFinderDataProcessor:
             logging.info(f"Per-species summary written to {summary_file.name}")
         except IOError as e:
             logging.error(f"Failed to write per-species summary for {filename_csn}: {e}")
+            self.write_failures.append((summary_file, e))
 
     def _write_global_node_summary(self, global_summary_data):
         """Writes the wide-format summary table for all species across all nodes."""
@@ -349,6 +381,7 @@ class OrthoFinderDataProcessor:
             logging.info(f"Global node summary written to {summary_file.name}")
         except IOError as e:
             logging.error(f"Failed to write global node summary: {e}")
+            self.write_failures.append((summary_file, e))
 
         return summary_file
 
@@ -466,6 +499,7 @@ class OrthoFinderDataProcessor:
         all_genes_from_fasta = self._get_all_gene_ids_from_fasta(species_basename)
         if not all_genes_from_fasta:
             logging.warning(f"No genes found for {species_basename} (missing/empty protein FASTA). Skipping.")
+            self.skipped_species.setdefault(species_basename, "protein FASTA is empty")
             return [], 0, 0, 0, {}
 
         species_out_dir = self.out_dir / filename_csn
@@ -658,20 +692,26 @@ class OrthoFinderDataProcessor:
 
         if self.cross_checker:
             n_excluded = len(self.cross_checker.exclusions)
-            logging.info(f"  [INFO] Pairwise cross-check: {n_excluded} candidate gene(s) excluded "
-                         f"-- see cross_check_exclusions.tsv")
+            n_checked = len(self.cross_checker.checked_species)
+            n_total = n_checked + len(self.cross_checker.unchecked_species)
+            logging.info(f"  [INFO] Pairwise cross-check: cross-checked {n_checked} of {n_total} species; "
+                         f"{n_excluded} candidate gene(s) excluded -- see cross_check_exclusions.tsv")
+            if self.cross_checker.unchecked_species:
+                logging.warning("  Not cross-checked (no Orthologues_<species>/ directory): "
+                                + ", ".join(sorted(self.cross_checker.unchecked_species)))
         else:
             logging.info("  [SKIPPED] Pairwise cross-check: no Orthologues/ directory was available or it was skipped.")
 
 ###############################################################################
 
     def run(self):
+        """Runs the pipeline. Returns the process exit code (0 on success)."""
         logging.info("Starting OrthoFinder Data Processor pipeline.")
         # The mkdir line that was here has been moved to __init__
         try:
             self.initialize_processors()
             if not self.stratigraphy_classifier or not self.tree_parser:
-                logging.error("Processors not initialized correctly. Cannot proceed."); return
+                logging.error("Processors not initialized correctly. Cannot proceed."); return 1
 
             all_species_classifications, c_lsg_stats, global_summary_data = [], {}, {}
             all_species_filenames = sorted(self.stratigraphy_classifier.species_in_og_table)
@@ -680,6 +720,8 @@ class OrthoFinderDataProcessor:
             for species_filename in all_species_filenames:
                 gene_data, c_lsg_percentage, total_candidate_percentage, verified_candidate_percentage, node_data = \
                     self.process_and_classify_genes_for_species(species_filename)
+                if species_filename in self.skipped_species:
+                    continue
                 all_species_classifications.extend(gene_data)
                 c_lsg_stats[species_filename] = [
                     c_lsg_percentage, total_candidate_percentage, verified_candidate_percentage
@@ -713,7 +755,11 @@ class OrthoFinderDataProcessor:
 
             self._print_final_summary(global_summary_data)
             self._print_validation_status()
+            exit_code = self._report_problems()
 
+        except PipelineInputError as e:
+            logging.critical(f"Invalid input, stopping: {e}")
+            return 1
         except FileNotFoundError as e:
             # Missing/misnamed input file -- initialize_processors() already
             # logged a specific, actionable message (what was expected, what
@@ -721,10 +767,33 @@ class OrthoFinderDataProcessor:
             # this case and just buries that message under noise, so it's
             # deliberately omitted here (unlike the genuine-bug case below).
             logging.critical(f"Cannot proceed: {e}")
+            return 1
         except Exception as e:
             logging.critical(f"A critical error occurred in the main pipeline: {e}", exc_info=True)
+            return 1
 
         logging.info("Pipeline finished.")
+        return exit_code
+
+    def _report_problems(self):
+        """Logs skipped species and failed writes; returns the exit code (1 if the run must fail)."""
+        exit_code = 0
+        if self.skipped_species:
+            level = logging.WARNING if self.allow_missing else logging.ERROR
+            logging.log(level, f"{len(self.skipped_species)} species were skipped and are absent from the output:")
+            for sp, reason in sorted(self.skipped_species.items()):
+                logging.log(level, f"  {sp}: {reason}")
+            if self.allow_missing:
+                logging.warning("Continuing because --allow-missing was given.")
+            else:
+                logging.error("Exiting non-zero. Fix the inputs, or pass --allow-missing to accept the skipped species.")
+                exit_code = 1
+        if self.write_failures:
+            logging.error(f"{len(self.write_failures)} output file(s) could not be written:")
+            for path, err in self.write_failures:
+                logging.error(f"  {path}: {err}")
+            exit_code = 1
+        return exit_code
 
     def _save_gene_ids(self, filepath, ids):
         try:
@@ -732,6 +801,7 @@ class OrthoFinderDataProcessor:
                 for gene_id in sorted(list(ids)): f.write(f"{gene_id}\n")
         except IOError as e:
             logging.error(f"Error saving gene IDs to {filepath}: {e}")
+            self.write_failures.append((filepath, e))
 
     def _filter_fasta(self, species_filename, file_type, output_dir, out_file_name, gene_ids_to_include):
         if not gene_ids_to_include:
@@ -774,6 +844,7 @@ class OrthoFinderDataProcessor:
             logging.info(f"Successfully wrote detailed gene summary to {summary_file}")
         except Exception as e:
             logging.error(f"Failed to write gene classification summary: {e}")
+            self.write_failures.append((summary_file, e))
 
     def generate_c_lsg_summary(self, gene_stats):
         """
@@ -837,6 +908,9 @@ def main():
                              'the consequence: candidate species-specific genes will not be verified '
                              'against reciprocal-best-hit orthology, so results may include genes with a '
                              'real ortholog that clustering missed.')
+    parser.add_argument('--allow-missing', action='store_true',
+                        help='Do not fail when a species in Orthogroups.tsv has no readable protein FASTA. '
+                             'Such species are still reported and left out of the output.')
     args = parser.parse_args()
     processor = OrthoFinderDataProcessor(
         args.out_dir,
@@ -850,8 +924,9 @@ def main():
         orthologues_dirname=args.orthologues_dirname,
         skip_cross_check=args.skip_cross_check,
         skip_hog_validation=args.skip_hog_validation,
+        allow_missing=args.allow_missing,
     )
-    processor.run()
+    sys.exit(processor.run())
 
 if __name__ == "__main__":
     main()

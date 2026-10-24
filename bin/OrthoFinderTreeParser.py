@@ -198,6 +198,18 @@ class SpeciesTree:
             
         return species_names
 
+    def count_unlabelled_internal_nodes(self):
+        """Returns the number of internal nodes (including the root) that have no label."""
+        def walk(node):
+            n = 0
+            if node.children:
+                if not node.name.split(':')[0].strip():
+                    n += 1
+                for child in node.children:
+                    n += walk(child)
+            return n
+        return walk(self.root) if self.root else 0
+
     def get_all_species(self):
         """Returns a set of all species names (leaf IDs) in the tree."""
         if not self.root:

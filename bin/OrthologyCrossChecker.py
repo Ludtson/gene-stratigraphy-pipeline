@@ -31,6 +31,7 @@ Version: 2.0.0
 """
 
 import csv
+import logging
 import sys
 from pathlib import Path
 
@@ -59,6 +60,11 @@ class OrthologyCrossChecker:
         # Exclusion log entries: {gene_id, species, original_status,
         # check, conflicting_species, conflicting_gene}
         self.exclusions = []
+
+        # Species whose candidates were checked / could not be checked
+        # because Orthologues_<species>/ is absent.
+        self.checked_species = set()
+        self.unchecked_species = set()
 
     def _load_pairwise_files_for_species(self, species):
         """
@@ -128,6 +134,16 @@ class OrthologyCrossChecker:
         """
         if not self.orthologues_dir:
             return set(candidate_genes)
+
+        if (self.orthologues_dir / f"Orthologues_{species}").is_dir():
+            self.checked_species.add(species)
+        else:
+            self.unchecked_species.add(species)
+            logging.warning(
+                f"No Orthologues_{species}/ under {self.orthologues_dir}: "
+                f"pairwise cross-check skipped for {species} "
+                f"({len(candidate_genes)} candidate gene(s) left unverified)."
+            )
 
         survivors = set()
 

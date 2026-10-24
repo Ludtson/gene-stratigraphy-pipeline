@@ -228,6 +228,21 @@ if [ ${#files[@]} -eq 0 ]; then
     exit 1
 fi
 
+# OrthoFinder takes the whole header line as the sequence ID only if it has no
+# whitespace; downstream steps expect single-token IDs. Stop before the
+# expensive run rather than discovering mismatched IDs afterwards.
+bad_header_files=()
+for f in "${files[@]}"; do
+    if grep -qE '^>.*[[:space:]]' "$f"; then
+        bad_header_files+=("$(basename "$f")")
+    fi
+done
+if [ ${#bad_header_files[@]} -gt 0 ]; then
+    log ERROR "Protein headers contain whitespace (or CR line endings) in: ${bad_header_files[*]}"
+    log ERROR "Headers must be a single ID, e.g. '>gene1'. Example offender: $(grep -hE -m1 '^>.*[[:space:]]' "$output_dir/protein/${bad_header_files[0]}" | head -c 120)"
+    exit 1
+fi
+
 ln -s "${files[@]}" "$temp_dir"/
 
 
