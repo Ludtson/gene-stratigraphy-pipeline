@@ -7,7 +7,7 @@ This script filters gene sequences from a FASTA file (CDS or protein) based on a
 and writes the filtered genes to a new FASTA file.
 
 The script supports either including genes in the list (--include) or excluding them (default).
-It assumes the gene ID in the FASTA header is the part before the first period or space.
+FASTA headers are expected to be single gene IDs, as written by Stage 1.
 """
 
 import os
@@ -46,7 +46,6 @@ class GeneSequenceExtractor:
 
     def _extract_gene_id(self, header):
         """Extracts the gene ID from a FASTA header line."""
-        # Assumes ID is the first part of the header before a space or period
         header_part = header.lstrip('>').split()[0]
         return header_part
 

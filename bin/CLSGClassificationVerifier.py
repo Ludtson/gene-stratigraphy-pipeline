@@ -230,7 +230,7 @@ class CLSGClassificationVerifier:
         for path in sorted((species_dir / "gene_IDs_by_node").glob(f"{prefix}*{suffix}")):
             claimed_node = path.name[len(prefix):-len(suffix)]
             if claimed_node == "candidate_lsg":
-                continue  # cross-checked subset of the species-specific buckets, not a node
+                continue  # union of every node except the root, not a node itself
             for gene_id in sorted(self._load_gene_id_list(path)):
                 checked += 1
                 try:

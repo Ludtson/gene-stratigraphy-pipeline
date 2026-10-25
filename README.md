@@ -180,8 +180,8 @@ Exits non-zero if any violation is found, so it can be used as a CI gate, not ju
 ```
 output_dir/
   <species>/
-    gene_IDs_by_node/       # gene IDs per stratigraphic node (N0, N1, ..., species_specific_clustered/unclustered), plus the final candidate_lsg list
-    proteins_by_node/       # protein FASTA per node, same buckets, plus the final candidate_LSGs FASTA
+    gene_IDs_by_node/       # gene IDs per stratigraphic node (N0, N1, ..., species_specific_clustered/unclustered), plus the final candidate_lsg list (every node except N0)
+    proteins_by_node/       # protein FASTA per node, same buckets, plus the final candidate_LSGs FASTA (every node except N0; the Stage 3 input)
     <species>_summary_per_node.csv
   intermediate/                    # SpeciesStats.csv, c_lsg_summary.csv, global_gene_counts_per_node.tsv
   C_LSG_Iso.tsv                    # every gene, every species, one row each (node + Orthogroup ID)

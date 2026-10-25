@@ -1,4 +1,4 @@
 Species,species_specific_percentage,total_candidate_percentage,verified_candidate_percentage
 Outgroup,0.00,50.00,50.00
-SpeciesA,0.00,50.00,25.00
-SpeciesB,0.00,0.00,0.00
+SpeciesA,0.00,75.00,50.00
+SpeciesB,0.00,100.00,100.00

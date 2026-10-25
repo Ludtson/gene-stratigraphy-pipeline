@@ -511,6 +511,7 @@ class OrthoFinderDataProcessor:
         node_buckets = defaultdict(set)  # node_label -> set of gene_ids (species-specific buckets included)
         candidate_status = {}
         candidate_lsg_genes = set()
+        root_name = self.tree_parser.root.name.split(':')[0]
 
         for gene_id in sorted(all_genes_from_fasta):
             status, node_label = self.stratigraphy_classifier.classify_gene(species_basename, gene_id)
@@ -519,8 +520,10 @@ class OrthoFinderDataProcessor:
             og_id = self.stratigraphy_classifier.gene_to_og.get((species_basename, gene_id), 'NA')
             gene_classification_data.append([correct_species_name, gene_id, node_label, og_id])
 
-            if status in (SPECIES_SPECIFIC_CLUSTERED, SPECIES_SPECIFIC_UNCLUSTERED):
-                candidate_status[gene_id] = status
+            # Candidate lineage-specific genes: every gene placed below the root (all nodes except N0,
+            # including both species-specific buckets).
+            if node_label != root_name:
+                candidate_status[gene_id] = node_label
                 candidate_lsg_genes.add(gene_id)
 
         self._cross_validate_against_hog(species_basename, node_buckets)
@@ -541,11 +544,14 @@ class OrthoFinderDataProcessor:
 
         # Secondary cross-check: a gene that looks species-specific from
         # Orthogroups.tsv alone may still have a real ortholog findable via
-        # reciprocal-best-hit that clustering missed. Verify every candidate
-        # before it's treated as final.
+        # reciprocal-best-hit that clustering missed. Only species-specific
+        # candidates are checked; genes placed at N1 and below already have
+        # orthologs in their clade by definition.
         if self.cross_checker:
-            verified_candidate_genes = self.cross_checker.filter_candidates(
-                species_basename, candidate_lsg_genes, original_status_lookup=candidate_status
+            species_specific = {g for g in candidate_lsg_genes
+                                if candidate_status[g] in (SPECIES_SPECIFIC_CLUSTERED, SPECIES_SPECIFIC_UNCLUSTERED)}
+            verified_candidate_genes = (candidate_lsg_genes - species_specific) | self.cross_checker.filter_candidates(
+                species_basename, species_specific, original_status_lookup=candidate_status
             )
             n_excluded = len(candidate_lsg_genes) - len(verified_candidate_genes)
             if n_excluded:
